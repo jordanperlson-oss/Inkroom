@@ -1,0 +1,52 @@
+name: Build Mac plugin
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -B build -G Xcode
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Build AU and VST3
+        run: >
+          cmake --build build --config Release
+          --target Inkroom_AU Inkroom_VST3
+          -- -quiet
+
+      - name: Sign for local use
+        run: |
+          ART=build/Inkroom_artefacts/Release
+          codesign --force --deep --sign - "$ART/AU/Inkroom.component"
+          codesign --force --deep --sign - "$ART/VST3/Inkroom.vst3"
+
+      - name: Package
+        run: |
+          ART=build/Inkroom_artefacts/Release
+          mkdir -p dist
+          cp -R "$ART/AU/Inkroom.component" dist/
+          cp -R "$ART/VST3/Inkroom.vst3" dist/
+          cp INSTALL.md dist/
+          cd dist && zip -r -y ../Inkroom-mac.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Inkroom-mac
+          path: Inkroom-mac.zip
+
+      - name: Validate with Logic's checker (auval)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R build/Inkroom_artefacts/Release/AU/Inkroom.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 5
+          auval -v aufx Inkr Imgn
