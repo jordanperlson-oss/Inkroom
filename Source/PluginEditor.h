@@ -124,10 +124,10 @@ private:
     juce::TextButton pointsBtn { "Points" }, brushBtn { "Brush" }, smoothBtn { "Smooth" }, invertBtn { "Invert" },
                      undoBtn { "Undo" }, redoBtn { "Redo" }, soloBtn { "Tail solo" };
     std::array<juce::TextButton, 5> stampBtns;
-    juce::Slider predelaySl, brightSl, mixSl, driftSl, swingSl, depthSl, toneSl;
+    juce::Slider predelaySl, brightSl, outputSl, mixSl, driftSl, swingSl, depthSl, toneSl;
 
     std::unique_ptr<ComboAtt> loopAtt, typeAtt, charAtt, placeAtt;
-    std::unique_ptr<SliderAtt> predelayAtt, brightAtt, mixAtt, driftAtt, swingAtt, depthAtt, toneAtt;
+    std::unique_ptr<SliderAtt> predelayAtt, brightAtt, outputAtt, mixAtt, driftAtt, swingAtt, depthAtt, toneAtt;
     std::unique_ptr<ButtonAtt> soloAtt;
 
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> sliderLabels;

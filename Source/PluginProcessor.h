@@ -86,6 +86,7 @@ private:
     std::atomic<float>* pPlace = nullptr;
     std::atomic<float>* pLoop = nullptr;
     std::atomic<float>* pSolo = nullptr;
+    std::atomic<float>* pOutput = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InkroomProcessor)
 };

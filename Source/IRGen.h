@@ -130,14 +130,32 @@ inline juce::AudioBuffer<float> spring (double sr, double size, double decay, ju
 /** The four corners crossfaded by the Size and Length lanes: {size, decay seconds}. */
 constexpr double kCorners[4][2] = { { 0.0, 0.35 }, { 0.0, 4.5 }, { 1.0, 0.35 }, { 1.0, 4.5 } };
 
+/** Scales an impulse response to unit energy, so every type and corner plays back at the same loudness. */
+inline void normaliseEnergy (juce::AudioBuffer<float>& buf)
+{
+    double e = 0.0;
+    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+    {
+        const auto* d = buf.getReadPointer (ch);
+        for (int i = 0; i < buf.getNumSamples(); ++i)
+            e += (double) d[i] * d[i];
+    }
+    e /= juce::jmax (1, buf.getNumChannels());
+    if (e > 1.0e-12)
+        buf.applyGain ((float) (1.0 / std::sqrt (e)));
+}
+
 inline juce::AudioBuffer<float> make (int type, double sr, int corner, juce::Random& r)
 {
     const double s = kCorners[corner][0], dcy = kCorners[corner][1];
+    juce::AudioBuffer<float> buf;
     switch (type)
     {
-        case 1:  return plate (sr, s, dcy, r);
-        case 2:  return spring (sr, s, dcy, r);
-        default: return room (sr, s, dcy, r);
+        case 1:  buf = plate (sr, s, dcy, r); break;
+        case 2:  buf = spring (sr, s, dcy, r); break;
+        default: buf = room (sr, s, dcy, r); break;
     }
+    normaliseEnergy (buf);
+    return buf;
 }
 } // namespace ink::ir

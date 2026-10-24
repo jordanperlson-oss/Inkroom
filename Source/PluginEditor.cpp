@@ -562,6 +562,7 @@ InkroomEditor::InkroomEditor (InkroomProcessor& p)
 
     setupSlider (predelaySl, "predelay", predelayAtt, "Pre-delay");
     setupSlider (brightSl, "bright", brightAtt, "Brightness");
+    setupSlider (outputSl, "output", outputAtt, "Tail level");
     setupSlider (mixSl, "mix", mixAtt, "Mix");
     setupSlider (driftSl, "drift", driftAtt, "Drift");
     setupSlider (swingSl, "swing", swingAtt, "Swing");
@@ -822,6 +823,7 @@ void InkroomEditor::resized()
     typeBox.setBounds (20, 548, 150, 28);
     row (predelaySl, 20, 588);
     row (brightSl, 20, 622);
+    row (outputSl, 20, 656);
 
     // Motion tray.
     row (mixSl, 350, 548);

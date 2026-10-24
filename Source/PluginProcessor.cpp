@@ -7,6 +7,10 @@ namespace
 {
 constexpr int kControlStep = 16;   // samples between lane reads
 constexpr int kLoopBeats[] = { 2, 4, 8, 16 };
+constexpr float kTailCalibration = 1.0f;
+// Per-type trims (dB) so Room, Plate and Spring all sit about 2 dB under the input
+// at Mix 100%, Level full and Tail level 0 dB. Measured with tests/Measure.cpp.
+constexpr float kTypeTrimDb[] = { 2.5f, 7.6f, -3.3f };
 
 inline double fracd (double x) { return x - std::floor (x); }
 inline double rndd (double n) { return fracd (std::sin (n * 12.9898 + 78.233) * 43758.5453); }
@@ -52,6 +56,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout InkroomProcessor::createLayo
     layout.add (std::make_unique<F> (juce::ParameterID { "depth", 1 }, "Drive depth", R (0.0f, 1.0f, 0.01f), 0.8f, A().withStringFromValueFunction (pctText)));
     layout.add (std::make_unique<F> (juce::ParameterID { "tone", 1 }, "Drive tone", R (0.0f, 1.0f, 0.01f), 0.72f,
         A().withStringFromValueFunction ([] (float v, int) { return kHzText (600.0f * std::pow (30.0f, v)); })));
+    layout.add (std::make_unique<F> (juce::ParameterID { "output", 1 }, "Tail level", R (-24.0f, 12.0f, 0.1f), 0.0f,
+        A().withStringFromValueFunction ([] (float v, int) { return (v > 0.05f ? "+" : "") + juce::String (v, 1) + " dB"; })));
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "type", 1 }, "Reverb type", juce::StringArray { "Room", "Plate", "Spring" }, 0));
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "character", 1 }, "Drive character", juce::StringArray { "Tape", "Tube", "Fold" }, 0));
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "placement", 1 }, "Drive placement", juce::StringArray { "Into room", "On tail" }, 1));
@@ -81,6 +87,7 @@ InkroomProcessor::InkroomProcessor()
     pPlace = apvts.getRawParameterValue ("placement");
     pLoop = apvts.getRawParameterValue ("loop");
     pSolo = apvts.getRawParameterValue ("solo");
+    pOutput = apvts.getRawParameterValue ("output");
 
     for (auto& v : uiVals)
         v.store (0.5f);
@@ -170,7 +177,7 @@ void InkroomProcessor::rebuildImpulses()
         convs[(size_t) i]->loadImpulseResponse (ink::ir::make (type, sr, i, r), sr,
                                                 juce::dsp::Convolution::Stereo::yes,
                                                 juce::dsp::Convolution::Trim::no,
-                                                juce::dsp::Convolution::Normalise::yes);
+                                                juce::dsp::Convolution::Normalise::no);
     builtType = type;
     builtRate = sr;
 }
@@ -339,7 +346,8 @@ void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
     }
 
     // 4. Tail: brightness, optional drive on the tail, level, pan, mix.
-    const float wetGain = mix * 1.3f;
+    const int typeIdx = juce::jlimit (0, 2, builtType);
+    const float wetGain = mix * kTailCalibration * juce::Decibels::decibelsToGain (pOutput->load() + kTypeTrimDb[typeIdx]);
     const float dryGain = solo ? 0.0f : 1.0f;
     const float halfPi = juce::MathConstants<float>::halfPi;
     float energy = 0.0f;
