@@ -109,7 +109,7 @@ int main (int argc, char** argv)
     bool finite = true;
     for (int idx : { 2, 3 })
     {
-        proc.loadPreset (idx);
+        proc.loadPreset (0, idx);
         for (int i = 0; i < 20; ++i) { silent.clear(); proc.processBlock (silent, midi); juce::Thread::sleep (20); }
         report (idx == 2 ? "Gated '84" : "Reverse Snare", render (proc, head, sr, bs, finite));
     }
@@ -134,13 +134,13 @@ int main (int argc, char** argv)
     bool same = true;
     for (int l = 0; l < ink::NumLanes; ++l)
         for (int i = 0; i < ink::kN; ++i)
-            same = same && std::abs (other.lanes.get (l, i) - proc.lanes.get (l, i)) < 1e-6f;
+            same = same && std::abs (other.addLanes.get (l, i) - proc.addLanes.get (l, i)) < 1e-6f;
     std::cout << "State round trip keeps lanes: " << (same ? "yes" : "NO") << "\n";
 
     if (argc > 1)
     {
         setParam (proc, "type", 0.0f);
-        proc.loadPreset (3);
+        proc.loadPreset (0, 3);
         std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
         auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
         const juce::File out = juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]);

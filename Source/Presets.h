@@ -88,4 +88,58 @@ inline const std::vector<Preset>& presets()
     };
     return list;
 }
+
+/** Shape space presets. Lanes not mentioned keep their defaults (see shapeDefaults). */
+inline void shapeDefaults (Lanes& L)
+{
+    L.fill (Sustain, [] (float) { return 0.5f; });
+    L.fill (Punch,   [] (float) { return 0.5f; });
+    L.fill (SLevel,  [] (float) { return 0.95f; });
+    L.fill (Width,   [] (float) { return 0.5f; });
+    L.fill (SPan,    [] (float) { return 0.5f; });
+    L.fill (SDrive,  [] (float) { return 0.1f; });
+}
+
+inline const std::vector<Preset>& shapePresets()
+{
+    using namespace detail;
+    static const std::vector<Preset> list {
+        { "Breathing Rooms", "The room swells up between hits", 1, 0, 0, 1, [] (Lanes& L) {
+            L.fill (Sustain, [] (float p) { return 0.12f + 0.8f * std::pow (frac (p * 4), 1.8f); });
+            L.fill (Width,   [] (float p) { return 0.5f + 0.25f * std::sin (twoPi * p); });
+            L.fill (SDrive,  [] (float) { return 0.15f; });
+        } },
+        { "Gated Rooms", "Rooms open on 2 and 4, choked elsewhere", 1, 0, 1, 1, [] (Lanes& L) {
+            L.fill (Sustain, [] (float p) { int c; float u; beatOf (p, c, u); return c % 2 == 1 && u < 0.45f ? 0.82f : 0.04f; });
+            L.fill (Width,   [] (float p) { int c; float u; beatOf (p, c, u); return c % 2 == 1 ? 0.8f : 0.5f; });
+            L.fill (SDrive,  [] (float) { return 0.35f; });
+        } },
+        { "Pumping Rooms", "Room ducks on every beat and pumps back", 1, 0, 0, 1, [] (Lanes& L) {
+            L.fill (Sustain, [] (float p) { return 0.05f + 0.72f * std::pow (frac (p * 4), 0.55f); });
+            L.fill (Width,   [] (float) { return 0.55f; });
+            L.fill (SDrive,  [] (float) { return 0.45f; });
+        } },
+        { "Reverse Rooms", "The room sucks up into 2 and 4", 1, 0, 0, 1, [] (Lanes& L) {
+            L.fill (Sustain, [] (float p) { int c; float u; beatOf (p, c, u); return c % 2 == 0 ? 0.04f + 0.86f * u * u * u : 0.04f; });
+            L.fill (Width,   [] (float p) { int c; float u; beatOf (p, c, u); return c % 2 == 0 ? 0.5f + 0.4f * u : 0.5f; });
+            L.fill (SDrive,  [] (float p) { int c; float u; beatOf (p, c, u); return c % 2 == 0 ? 0.1f + 0.5f * u * u : 0.1f; });
+        } },
+        { "Wandering Rooms", "The room drifts across the stereo field", 2, 0, 0, 1, [] (Lanes& L) {
+            L.fill (Sustain, [] (float) { return 0.62f; });
+            L.fill (Width,   [] (float p) { return 0.3f + 0.6f * (0.5f - 0.5f * std::cos (twoPi * p)); });
+            L.fill (SPan,    [] (float p) { return 0.5f + 0.4f * std::sin (twoPi * p); });
+            L.fill (SDrive,  [] (float) { return 0.2f; });
+        } },
+        { "Choked Kit", "Tight hits with a short flick of room", 1, 0, 0, 1, [] (Lanes& L) {
+            L.fill (Sustain, [] (float p) { return 0.04f + 0.6f * std::pow (1.0f - frac (p * 8), 6.0f); });
+            L.fill (Width,   [] (float) { return 0.4f; });
+            L.fill (SDrive,  [] (float) { return 0.5f; });
+        } },
+        { "Accent Ones", "Punch the downbeat, tuck the rest", 1, 0, 0, 1, [] (Lanes& L) {
+            L.fill (Punch,   [] (float p) { int c; float u; beatOf (p, c, u); return c == 0 && u < 0.2f ? 0.88f : 0.4f; });
+            L.fill (Sustain, [] (float p) { int c; float u; beatOf (p, c, u); return c == 0 ? 0.7f : 0.45f; });
+        } },
+    };
+    return list;
+}
 } // namespace ink

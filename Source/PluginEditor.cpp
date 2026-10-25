@@ -126,7 +126,7 @@ void ShapeCanvas::buildNodes()
     // Simplify the drawn shape to as few points as keep it within a small error.
     std::array<float, kN> pts {};
     for (int i = 0; i < kN; ++i)
-        pts[(size_t) i] = proc.lanes.get (lane, i);
+        pts[(size_t) i] = lanes().get (lane, i);
 
     const float xs = 3.0f, eps = 0.022f;
     std::vector<char> keep ((size_t) kN, 0);
@@ -177,7 +177,7 @@ void ShapeCanvas::writeNodes()
         const auto& a = ext[j];
         const auto& b = ext[j + 1];
         const float f = std::abs (b.x - a.x) < 1.0e-6f ? 1.0f : ((float) i - a.x) / (b.x - a.x);
-        proc.lanes.set (lane, i, a.y + (b.y - a.y) * f);
+        lanes().set (lane, i, a.y + (b.y - a.y) * f);
     }
 }
 
@@ -204,10 +204,10 @@ void ShapeCanvas::brushAt (juce::Point<float> pos)
     {
         const int n = std::abs (idx - lastIdx), dir = idx > lastIdx ? 1 : -1;
         for (int k = 0; k <= n; ++k)
-            proc.lanes.set (lane, lastIdx + k * dir, lastV + (v - lastV) * (n ? (float) k / n : 1.0f));
+            lanes().set (lane, lastIdx + k * dir, lastV + (v - lastV) * (n ? (float) k / n : 1.0f));
     }
     else
-        proc.lanes.set (lane, idx, v);
+        lanes().set (lane, idx, v);
     lastIdx = idx;
     lastV = v;
     nodesValid = false;
@@ -343,20 +343,20 @@ void ShapeCanvas::paint (juce::Graphics& g)
         for (int i = 0; i <= kN; ++i)
         {
             const float x = p.getX() + (float) i / kN * p.getWidth();
-            const float y = yOf (proc.lanes.get (l, i % kN));
+            const float y = yOf (lanes().get (l, i % kN));
             if (i == 0) path.startNewSubPath (x, y); else path.lineTo (x, y);
         }
         return path;
     };
 
-    for (int l = 0; l < NumLanes; ++l)
+    for (int l = 0; l < ui::laneCount (space); ++l)
     {
         if (l == lane) continue;
-        g.setColour (laneColour[(size_t) l].withAlpha (0.28f));
+        g.setColour (ui::laneInfo (space, l).colour.withAlpha (0.28f));
         g.strokePath (lanePath (l), juce::PathStrokeType (1.2f));
     }
 
-    const auto col = laneColour[(size_t) lane];
+    const auto col = ui::laneInfo (space, lane).colour;
     auto path = lanePath (lane);
     auto fill = path;
     fill.lineTo (p.getRight(), p.getBottom());
@@ -393,19 +393,20 @@ void ShapeCanvas::paint (juce::Graphics& g)
         const float x = p.getX() + ph * p.getWidth();
         g.setColour (text.withAlpha (0.75f));
         g.drawVerticalLine ((int) x, p.getY() - 4.0f, p.getBottom());
-        const float y = yOf (proc.lanes.sample (lane, ph));
+        const float y = yOf (lanes().sample (lane, ph));
         g.setColour (col);
         g.fillEllipse (x - 4.5f, y - 4.5f, 9.0f, 9.0f);
     }
 
     // Axis labels for the selected lane.
-    const int type = (int) proc.apvts.getRawParameterValue ("type")->load();
-    const char* tops[] = { "Full", sizeTop[type], "4.5 s", "Right", "Hot" };
-    const char* bots[] = { "Silent", sizeBot[type], "0.3 s", "Left", "Clean" };
+    const int type = juce::jlimit (0, 2, (int) proc.apvts.getRawParameterValue ("type")->load());
+    const auto& info = ui::laneInfo (space, lane);
+    const bool sizeLane = space == AddSpace && lane == Size;
+    const juce::String top = sizeLane ? sizeTop[type] : info.top, bot = sizeLane ? sizeBot[type] : info.bot;
     g.setFont (monoFont (10.0f));
     g.setColour (muted);
-    g.drawText (juce::String (tops[lane]).toUpperCase(), juce::Rectangle<float> (p.getX() + 8, p.getY() + 4, 160, 14), juce::Justification::centredLeft);
-    g.drawText (juce::String (bots[lane]).toUpperCase(), juce::Rectangle<float> (p.getX() + 8, p.getBottom() - 18, 160, 14), juce::Justification::centredLeft);
+    g.drawText (top.toUpperCase(), juce::Rectangle<float> (p.getX() + 8, p.getY() + 4, 160, 14), juce::Justification::centredLeft);
+    g.drawText (bot.toUpperCase(), juce::Rectangle<float> (p.getX() + 8, p.getBottom() - 18, 160, 14), juce::Justification::centredLeft);
 
     g.setColour (line);
     g.drawRoundedRectangle (bounds.reduced (0.5f), 12.0f, 1.0f);
@@ -419,32 +420,32 @@ void RoomView::paint (juce::Graphics& g)
     g.setColour (paper);
     g.fillRoundedRectangle (b, 14.0f);
 
-    const float lev = vals[Level], size = vals[Size], pan = vals[Pan], drive = vals[Drive];
     const float w = b.getWidth(), h = b.getHeight(), m = std::min (w, h);
-    const float R = m * (0.1f + 0.34f * size);
-    const float cx = b.getCentreX() + (pan - 0.5f) * w * 0.55f, cy = b.getCentreY();
-    const auto col = laneColour[Size].interpolatedWith (laneColour[Drive], juce::jlimit (0.0f, 1.0f, drive * depth * 1.2f));
-    const float e = juce::jlimit (0.0f, 1.0f, energy) * (0.25f + 0.75f * lev);
+    const float R = m * (0.1f + 0.34f * st.size);
+    const float wx = st.shape ? 0.35f + 1.3f * st.width : 1.0f;
+    const float cx = b.getCentreX() + (st.pan - 0.5f) * w * 0.55f, cy = b.getCentreY();
+    const auto col = violet.interpolatedWith (ember, juce::jlimit (0.0f, 1.0f, st.drive * st.depth * 1.2f));
+    const float e = juce::jlimit (0.0f, 1.0f, st.energy) * (0.25f + 0.75f * st.level);
     const double t = juce::Time::getMillisecondCounterHiRes() * 0.001;
 
     for (int k = 0; k < 7; ++k)
     {
         const double a = juce::MathConstants<double>::twoPi * (rnd (k) + t * 0.04 * (1.0 + k * 0.3));
         const float d = R * 0.3f * (0.5f + 0.5f * (float) std::sin (t * 0.7 + k));
-        const float x = cx + (float) std::cos (a) * d, y = cy + (float) std::sin (a) * d * 0.8f;
+        const float x = cx + (float) std::cos (a) * d * wx, y = cy + (float) std::sin (a) * d * 0.8f;
         const float rr = R * (0.35f + 0.65f * (float) rnd (k * 9.7));
         g.setGradientFill (juce::ColourGradient (col.withAlpha (0.42f * e), x, y, col.withAlpha (0.0f), x + rr, y, true));
-        g.fillEllipse (x - rr, y - rr, rr * 2, rr * 2);
+        g.fillEllipse (x - rr * wx, y - rr, rr * 2 * wx, rr * 2);
     }
 
-    g.setColour (text.withAlpha (0.12f + 0.25f * lev));
+    g.setColour (text.withAlpha (0.12f + 0.25f * st.level));
     juce::Path outline;
-    if (type == 1)
+    if (! st.shape && st.type == 1)
         outline.addRectangle (cx - R * 1.05f, cy - R * 0.7f, R * 2.1f, R * 1.4f);
-    else if (type == 2)
+    else if (! st.shape && st.type == 2)
     {
         const float sw = R * 2.2f;
-        const int turns = 9 + (int) std::round (size * 8);
+        const int turns = 9 + (int) std::round (st.size * 8);
         for (int k = 0; k <= 160; ++k)
         {
             const float u = (float) k / 160.0f;
@@ -453,7 +454,7 @@ void RoomView::paint (juce::Graphics& g)
         }
     }
     else
-        outline.addEllipse (cx - R * 1.05f, cy - R * 0.95f, R * 2.1f, R * 1.9f);
+        outline.addEllipse (cx - R * 1.05f * wx, cy - R * 0.95f, R * 2.1f * wx, R * 1.9f);
     g.strokePath (outline, juce::PathStrokeType (1.0f));
 
     g.setColour (text.withAlpha (0.07f));
@@ -463,30 +464,52 @@ void RoomView::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+namespace
+{
+juce::PropertiesFile::Options settingsOptions()
+{
+    juce::PropertiesFile::Options o;
+    o.applicationName = "Inkroom";
+    o.filenameSuffix = ".settings";
+    o.folderName = "Imagine Plugins";
+    o.osxLibrarySubFolder = "Application Support";
+    return o;
+}
+} // namespace
+
 InkroomEditor::InkroomEditor (InkroomProcessor& p)
     : AudioProcessorEditor (&p), proc (p), canvas (p)
 {
     setLookAndFeel (&look);
+    settings = std::make_unique<juce::PropertiesFile> (settingsOptions());
 
-    addAndMakeVisible (room);
-    addAndMakeVisible (canvas);
+    addAndMakeVisible (content);
+    content.setSize (designW, designH);
+    content.painter = [this] (juce::Graphics& g) { paintContent (g); };
+
+    content.addAndMakeVisible (room);
+    content.addAndMakeVisible (canvas);
     canvas.onBeforeEdit = [this] { checkpoint(); markCustom(); };
 
-    // Presets
-    const auto& list = presets();
-    for (size_t i = 0; i < list.size(); ++i)
-        presetBox.addItem (list[i].name, (int) i + 1);
+    for (auto* b : { &addSpaceBtn, &shapeSpaceBtn })
+    {
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (1003);
+        content.addAndMakeVisible (b);
+    }
+    addSpaceBtn.onClick = [this] { if (addSpaceBtn.getToggleState()) proc.setSpace (AddSpace); };
+    shapeSpaceBtn.onClick = [this] { if (shapeSpaceBtn.getToggleState()) proc.setSpace (ShapeSpace); };
+
     presetBox.setTextWhenNothingSelected ("Custom shape");
-    presetBox.setSelectedId (proc.currentPreset.load() + 1, juce::dontSendNotification);
     presetBox.onChange = [this] {
         const int id = presetBox.getSelectedId();
-        if (id <= 0 || id - 1 == proc.currentPreset.load())
+        if (id <= 0 || id - 1 == proc.currentPreset[(size_t) shownSpace].load())
             return;
         checkpoint();
-        proc.loadPreset (id - 1);
+        proc.loadPreset (shownSpace, id - 1);
         canvas.invalidate();
     };
-    addAndMakeVisible (presetBox);
+    content.addAndMakeVisible (presetBox);
 
     setupCombo (loopBox, "loop", loopAtt);
     setupCombo (typeBox, "type", typeAtt);
@@ -498,27 +521,25 @@ InkroomEditor::InkroomEditor (InkroomProcessor& p)
     gridBox.addItem ("1/16", 4);
     gridBox.setSelectedId (4, juce::dontSendNotification);
     gridBox.onChange = [this] { canvas.setGrid (gridBox.getSelectedId()); };
-    addAndMakeVisible (gridBox);
+    content.addAndMakeVisible (gridBox);
 
-    for (int l = 0; l < NumLanes; ++l)
+    for (int l = 0; l < kMaxLanes; ++l)
     {
         auto& b = laneButtons[(size_t) l];
-        b.setButtonText (ui::laneName[(size_t) l]);
         b.setClickingTogglesState (true);
         b.setRadioGroupId (1001);
-        b.setColour (juce::TextButton::buttonOnColourId, ui::laneColour[(size_t) l]);
-        b.onClick = [this, l] { if (laneButtons[(size_t) l].getToggleState()) selectLane (l); };
-        addAndMakeVisible (b);
+        b.onClick = [this, l] { if (laneButtons[(size_t) l].getToggleState()) canvas.setLane (l); };
+        content.addChildComponent (b);
     }
 
     for (auto* b : { &pointsBtn, &brushBtn })
     {
         b->setClickingTogglesState (true);
         b->setRadioGroupId (1002);
-        addAndMakeVisible (b);
+        content.addAndMakeVisible (b);
     }
-    pointsBtn.onClick = [this] { if (pointsBtn.getToggleState()) setMode (ShapeCanvas::Mode::Points); };
-    brushBtn.onClick = [this] { if (brushBtn.getToggleState()) setMode (ShapeCanvas::Mode::Brush); };
+    pointsBtn.onClick = [this] { if (pointsBtn.getToggleState()) canvas.setMode (ShapeCanvas::Mode::Points); };
+    brushBtn.onClick = [this] { if (brushBtn.getToggleState()) canvas.setMode (ShapeCanvas::Mode::Brush); };
     pointsBtn.setToggleState (true, juce::dontSendNotification);
 
     const char* stampNames[] = { "Swell", "Fade", "Pulse", "Gate", "Wave" };
@@ -526,92 +547,152 @@ InkroomEditor::InkroomEditor (InkroomProcessor& p)
     {
         stampBtns[(size_t) i].setButtonText (stampNames[i]);
         stampBtns[(size_t) i].onClick = [this, i] { stamp (i); };
-        addAndMakeVisible (stampBtns[(size_t) i]);
+        content.addAndMakeVisible (stampBtns[(size_t) i]);
     }
 
     smoothBtn.onClick = [this] {
         checkpoint(); markCustom();
+        auto& L = shownLanes();
         const int l = canvas.getLane();
         for (int pass = 0; pass < 3; ++pass)
         {
             std::array<float, kN> c {};
-            for (int i = 0; i < kN; ++i) c[(size_t) i] = proc.lanes.get (l, i);
+            for (int i = 0; i < kN; ++i) c[(size_t) i] = L.get (l, i);
             for (int i = 0; i < kN; ++i)
             {
                 float s = 0.0f;
                 for (int k = -3; k <= 3; ++k) s += c[(size_t) ((i + k + kN) % kN)];
-                proc.lanes.set (l, i, s / 7.0f);
+                L.set (l, i, s / 7.0f);
             }
         }
         canvas.invalidate();
     };
     invertBtn.onClick = [this] {
         checkpoint(); markCustom();
+        auto& L = shownLanes();
         const int l = canvas.getLane();
-        for (int i = 0; i < kN; ++i) proc.lanes.set (l, i, 1.0f - proc.lanes.get (l, i));
+        for (int i = 0; i < kN; ++i) L.set (l, i, 1.0f - L.get (l, i));
         canvas.invalidate();
     };
     undoBtn.onClick = [this] { undo(); };
     redoBtn.onClick = [this] { redo(); };
     for (auto* b : { &smoothBtn, &invertBtn, &undoBtn, &redoBtn })
-        addAndMakeVisible (b);
+        content.addAndMakeVisible (b);
 
     soloBtn.setClickingTogglesState (true);
-    addAndMakeVisible (soloBtn);
+    content.addAndMakeVisible (soloBtn);
     soloAtt = std::make_unique<ButtonAtt> (proc.apvts, "solo", soloBtn);
 
     setupSlider (predelaySl, "predelay", predelayAtt, "Pre-delay");
     setupSlider (brightSl, "bright", brightAtt, "Brightness");
     setupSlider (outputSl, "output", outputAtt, "Tail level");
+    setupSlider (hitLenSl, "hitlen", hitLenAtt, "Hit length");
+    setupSlider (sensSl, "sens", sensAtt, "Sensitivity");
+    setupSlider (hitsSl, "hits", hitsAtt, "Hits");
     setupSlider (mixSl, "mix", mixAtt, "Mix");
     setupSlider (driftSl, "drift", driftAtt, "Drift");
     setupSlider (swingSl, "swing", swingAtt, "Swing");
     setupSlider (depthSl, "depth", depthAtt, "Depth");
     setupSlider (toneSl, "tone", toneAtt, "Tone");
 
-    laneButtons[0].setToggleState (true, juce::dontSendNotification);
+    layoutContent();
+    applySpace (proc.space());
     updateHistoryButtons();
-    setSize (1000, 720);
+
+    // Size: the session's size, else the last size you used, never larger than the screen.
+    float scale = proc.editorScale.load();
+    if (scale <= 0.0f)
+        scale = (float) settings->getDoubleValue ("scale", 1.0);
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+    {
+        const auto area = display->userArea;
+        scale = std::min (scale, std::min ((float) area.getWidth() * 0.92f / designW, (float) area.getHeight() * 0.88f / designH));
+    }
+    scale = juce::jlimit (0.6f, 1.5f, scale);
+
+    setResizable (true, true);
+    setResizeLimits ((int) (designW * 0.6f), (int) (designH * 0.6f), (int) (designW * 1.5f), (int) (designH * 1.5f));
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio ((double) designW / designH);
+    setSize (juce::roundToInt (designW * scale), juce::roundToInt (designH * scale));
     startTimerHz (60);
 }
 
 InkroomEditor::~InkroomEditor()
 {
     stopTimer();
+    if (settings)
+        settings->saveIfNeeded();
     setLookAndFeel (nullptr);
+}
+
+void InkroomEditor::resized()
+{
+    const float scale = (float) getWidth() / (float) designW;
+    content.setTransform (juce::AffineTransform::scale (scale));
+    proc.editorScale.store (scale);
+    if (settings)
+        settings->setValue ("scale", scale);
 }
 
 void InkroomEditor::setupCombo (juce::ComboBox& box, const juce::String& id, std::unique_ptr<ComboAtt>& att)
 {
     if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter (id)))
         box.addItemList (param->choices, 1);
-    addAndMakeVisible (box);
+    content.addAndMakeVisible (box);
     att = std::make_unique<ComboAtt> (proc.apvts, id, box);
 }
 
 void InkroomEditor::setupSlider (juce::Slider& s, const juce::String& id, std::unique_ptr<SliderAtt>& att, const juce::String& label)
 {
-    addAndMakeVisible (s);
+    content.addAndMakeVisible (s);
     s.setSliderStyle (juce::Slider::LinearHorizontal);
     s.setTextBoxStyle (juce::Slider::TextBoxRight, true, 64, 20);
     att = std::make_unique<SliderAtt> (proc.apvts, id, s);
-    sliderLabels.push_back ({ label, {} });
-    s.getProperties().set ("labelIndex", (int) sliderLabels.size() - 1);
+    sliderLabels.push_back ({ label, &s });
 }
 
-void InkroomEditor::selectLane (int l)
+void InkroomEditor::applySpace (int sp)
 {
-    canvas.setLane (l);
-}
+    shownSpace = sp;
+    const bool shape = sp == ShapeSpace;
+    addSpaceBtn.setToggleState (! shape, juce::dontSendNotification);
+    shapeSpaceBtn.setToggleState (shape, juce::dontSendNotification);
 
-void InkroomEditor::setMode (ShapeCanvas::Mode m)
-{
-    canvas.setMode (m);
+    const int count = ui::laneCount (sp);
+    for (int l = 0; l < kMaxLanes; ++l)
+    {
+        auto& b = laneButtons[(size_t) l];
+        b.setVisible (l < count);
+        if (l < count)
+        {
+            const auto& info = ui::laneInfo (sp, l);
+            b.setButtonText (info.name);
+            b.setColour (juce::TextButton::buttonOnColourId, info.colour);
+        }
+        b.setToggleState (l == 0, juce::dontSendNotification);
+    }
+    canvas.setSpace (sp);
+
+    presetBox.clear (juce::dontSendNotification);
+    const auto& list = shape ? shapePresets() : presets();
+    for (size_t i = 0; i < list.size(); ++i)
+        presetBox.addItem (list[i].name, (int) i + 1);
+    const int cp = proc.currentPreset[(size_t) sp].load();
+    presetBox.setSelectedId (cp >= 0 ? cp + 1 : 0, juce::dontSendNotification);
+
+    for (auto* c : std::initializer_list<juce::Component*> { &typeBox, &predelaySl, &brightSl, &outputSl, &placeBox })
+        c->setVisible (! shape);
+    for (auto* c : std::initializer_list<juce::Component*> { &hitLenSl, &sensSl, &hitsSl })
+        c->setVisible (shape);
+
+    seenVersion = -1;
+    content.repaint();
 }
 
 void InkroomEditor::checkpoint()
 {
-    undoStack.push_back (proc.lanes.snapshot());
+    undoStack.push_back ({ shownSpace, shownLanes().snapshot() });
     if (undoStack.size() > 80)
         undoStack.erase (undoStack.begin());
     redoStack.clear();
@@ -621,9 +702,13 @@ void InkroomEditor::checkpoint()
 void InkroomEditor::undo()
 {
     if (undoStack.empty()) return;
-    redoStack.push_back (proc.lanes.snapshot());
-    proc.lanes.restore (undoStack.back());
+    auto e = undoStack.back();
     undoStack.pop_back();
+    redoStack.push_back ({ e.space, proc.lanesFor (e.space).snapshot() });
+    proc.lanesFor (e.space).restore (e.snap);
+    proc.currentPreset[(size_t) e.space].store (-1);
+    if (e.space != shownSpace)
+        proc.setSpace (e.space);
     markCustom();
     updateHistoryButtons();
 }
@@ -631,9 +716,13 @@ void InkroomEditor::undo()
 void InkroomEditor::redo()
 {
     if (redoStack.empty()) return;
-    undoStack.push_back (proc.lanes.snapshot());
-    proc.lanes.restore (redoStack.back());
+    auto e = redoStack.back();
     redoStack.pop_back();
+    undoStack.push_back ({ e.space, proc.lanesFor (e.space).snapshot() });
+    proc.lanesFor (e.space).restore (e.snap);
+    proc.currentPreset[(size_t) e.space].store (-1);
+    if (e.space != shownSpace)
+        proc.setSpace (e.space);
     markCustom();
     updateHistoryButtons();
 }
@@ -646,7 +735,7 @@ void InkroomEditor::updateHistoryButtons()
 
 void InkroomEditor::markCustom()
 {
-    proc.currentPreset.store (-1);
+    proc.currentPreset[(size_t) shownSpace].store (-1);
     presetBox.setSelectedId (0, juce::dontSendNotification);
 }
 
@@ -656,7 +745,7 @@ void InkroomEditor::stamp (int which)
     markCustom();
     const int l = canvas.getLane();
     const int cells = proc.loopBeats() * canvas.getGrid();
-    proc.lanes.fill (l, [which, cells] (float p) {
+    shownLanes().fill (l, [which, cells] (float p) {
         if (which == 4)
             return 0.5f + 0.42f * std::sin (juce::MathConstants<float>::twoPi * p);
         const float x = p * (float) cells, u = x - std::floor (x);
@@ -673,61 +762,95 @@ void InkroomEditor::stamp (int which)
 
 juce::String InkroomEditor::formatValue (int lane, float v) const
 {
+    const float depth = proc.apvts.getRawParameterValue ("depth")->load();
+    auto pan = [] (float x) {
+        const int n = juce::roundToInt ((x - 0.5f) * 200.0f);
+        return std::abs (n) < 4 ? juce::String ("C") : juce::String (n < 0 ? "L " : "R ") + juce::String (std::abs (n));
+    };
+    auto levelDb = [] (float x) { return x < 0.01f ? juce::String ("-inf dB") : juce::String (40.0f * std::log10 (x), 1) + " dB"; };
+
+    if (shownSpace == ShapeSpace)
+    {
+        switch (lane)
+        {
+            case Sustain:
+            case Punch:
+            {
+                const float g = v <= 0.5f ? (v / 0.5f) * (v / 0.5f) : 1.0f + (v - 0.5f) * 2.0f;
+                if (g < 0.01f) return "-inf dB";
+                const float db = 20.0f * std::log10 (g);
+                return (db > 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
+            }
+            case SLevel: return levelDb (v);
+            case Width:  return juce::String (juce::roundToInt (v * 200.0f)) + "%";
+            case SPan:   return pan (v);
+            default:     return juce::String (juce::roundToInt (v * depth * 100.0f)) + "%";
+        }
+    }
+
     const int type = (int) proc.apvts.getRawParameterValue ("type")->load();
     switch (lane)
     {
-        case Level:
-            return v < 0.01f ? juce::String ("-inf dB") : juce::String (40.0f * std::log10 (v), 1) + " dB";
+        case Level: return levelDb (v);
         case Size:
-        {
             if (type == 1) return v < 0.34f ? "Small" : v < 0.67f ? "Medium" : "Large";
             if (type == 2) return v < 0.34f ? "Short" : v < 0.67f ? "Mid" : "Long";
             return v < 0.15f ? "Closet" : v < 0.35f ? "Booth" : v < 0.55f ? "Studio" : v < 0.78f ? "Hall" : "Cathedral";
-        }
-        case Length:
-            return juce::String (0.35 * std::pow (4.5 / 0.35, (double) v), 1) + " s";
-        case Pan:
-        {
-            const int x = juce::roundToInt ((v - 0.5f) * 200.0f);
-            return std::abs (x) < 4 ? juce::String ("C") : juce::String (x < 0 ? "L " : "R ") + juce::String (std::abs (x));
-        }
-        default:
-            return juce::String (juce::roundToInt (v * proc.apvts.getRawParameterValue ("depth")->load() * 100.0f)) + "%";
+        case Length: return juce::String (0.35 * std::pow (4.5 / 0.35, (double) v), 1) + " s";
+        case Pan:    return pan (v);
+        default:     return juce::String (juce::roundToInt (v * depth * 100.0f)) + "%";
     }
 }
 
 void InkroomEditor::timerCallback()
 {
-    const int v = proc.lanes.version.load();
+    if (proc.space() != shownSpace)
+        applySpace (proc.space());
+
+    const int v = shownLanes().version.load();
     if (v != seenVersion)
     {
         seenVersion = v;
         canvas.invalidate();
-        const int cp = proc.currentPreset.load();
+        const int cp = proc.currentPreset[(size_t) shownSpace].load();
         presetBox.setSelectedId (cp >= 0 ? cp + 1 : 0, juce::dontSendNotification);
     }
 
-    std::array<float, NumLanes> vals {};
-    for (int l = 0; l < NumLanes; ++l)
-        vals[(size_t) l] = proc.uiVals[(size_t) l].load();
     const float target = proc.uiPlaying.load() || proc.uiEnergy.load() > 0.001f ? proc.uiEnergy.load() : 0.3f;
     smoothEnergy += (target - smoothEnergy) * 0.25f;
+    smoothHit = std::max (proc.uiHit.load(), smoothHit * 0.85f);
 
-    room.setState (vals, smoothEnergy, (int) proc.apvts.getRawParameterValue ("type")->load(),
-                   proc.apvts.getRawParameterValue ("depth")->load());
+    auto val = [this] (int l) { return proc.uiVals[(size_t) l].load(); };
+    RoomView::State st;
+    st.energy = smoothEnergy;
+    st.depth = proc.apvts.getRawParameterValue ("depth")->load();
+    st.type = (int) proc.apvts.getRawParameterValue ("type")->load();
+    st.shape = shownSpace == ShapeSpace;
+    if (st.shape)
+    {
+        st.level = val (SLevel); st.size = val (Sustain) * 0.95f; st.pan = val (SPan); st.drive = val (SDrive); st.width = val (Width);
+    }
+    else
+    {
+        st.level = val (Level); st.size = val (Size); st.pan = val (Pan); st.drive = val (Drive);
+    }
+    room.setState (st);
     room.repaint();
     canvas.repaint();
-    repaint (readoutArea);
+    content.repaint (readoutArea);
+    if (st.shape)
+        content.repaint (hitLightArea);
 }
 
-void InkroomEditor::paint (juce::Graphics& g)
+void InkroomEditor::paintContent (juce::Graphics& g)
 {
     using namespace ui;
+    const bool shape = shownSpace == ShapeSpace;
     g.fillAll (paper);
 
     g.setColour (muted);
     g.setFont (monoFont (10.5f));
-    g.drawText ("IMAGINE PLUGINS  -  MVP 0.1", 20, 14, 300, 14, juce::Justification::centredLeft);
+    g.drawText ("IMAGINE PLUGINS  -  0.2", 20, 14, 300, 14, juce::Justification::centredLeft);
     g.setColour (text);
     g.setFont (displayFont (40.0f));
     g.drawText ("Ink", 20, 28, 70, 46, juce::Justification::centredLeft);
@@ -737,10 +860,10 @@ void InkroomEditor::paint (juce::Graphics& g)
 
     g.setColour (muted);
     g.setFont (monoFont (10.0f));
+    g.drawText ("MODE", addSpaceBtn.getX(), addSpaceBtn.getY() - 16, 120, 14, juce::Justification::centredLeft);
     g.drawText ("PRESET", presetBox.getX(), presetBox.getY() - 16, 120, 14, juce::Justification::centredLeft);
     g.drawText ("SHAPE LOOP", loopBox.getX(), loopBox.getY() - 16, 120, 14, juce::Justification::centredLeft);
 
-    // Main unit panel.
     const juce::Rectangle<float> unit (20, 84, 960, 404);
     g.setColour (panel);
     g.fillRoundedRectangle (unit, 18.0f);
@@ -748,23 +871,26 @@ void InkroomEditor::paint (juce::Graphics& g)
     g.drawRoundedRectangle (unit.reduced (0.5f), 18.0f, 1.0f);
 
     // Readouts.
-    g.setFont (uiFont (12.0f));
-    for (int l = 0; l < NumLanes; ++l)
+    const int count = laneCount (shownSpace);
+    const int rowH = count > 5 ? 20 : 24;
+    for (int l = 0; l < count; ++l)
     {
+        const auto& info = laneInfo (shownSpace, l);
         const float v = proc.uiVals[(size_t) l].load();
-        const int y = readoutArea.getY() + l * 24;
+        const int y = readoutArea.getY() + l * rowH;
         g.setColour (muted);
-        g.drawText (laneName[(size_t) l], readoutArea.getX(), y, 60, 18, juce::Justification::centredLeft);
-        const juce::Rectangle<float> bar ((float) readoutArea.getX() + 64.0f, (float) y + 7.0f, 110.0f, 4.0f);
+        g.setFont (uiFont (12.0f));
+        g.drawText (info.name, readoutArea.getX(), y, 64, 18, juce::Justification::centredLeft);
+        const juce::Rectangle<float> bar ((float) readoutArea.getX() + 66.0f, (float) y + 7.0f, 104.0f, 4.0f);
         g.setColour (line);
         g.fillRoundedRectangle (bar, 2.0f);
-        g.setColour (laneColour[(size_t) l]);
-        const float shown = l == Drive ? v * proc.apvts.getRawParameterValue ("depth")->load() : v;
+        g.setColour (info.colour);
+        const bool isDrive = shape ? l == SDrive : l == Drive;
+        const float shown = isDrive ? v * proc.apvts.getRawParameterValue ("depth")->load() : v;
         g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, shown)), 2.0f);
         g.setColour (text);
         g.setFont (monoFont (11.0f));
         g.drawText (formatValue (l, v), readoutArea.getRight() - 76, y, 76, 18, juce::Justification::centredRight);
-        g.setFont (uiFont (12.0f));
     }
 
     g.setColour (muted);
@@ -773,7 +899,7 @@ void InkroomEditor::paint (juce::Graphics& g)
                 306, 460, 660, 18, juce::Justification::centredLeft);
 
     // Trays.
-    const char* trays[] = { "Space", "Motion", "Saturation" };
+    const char* trays[] = { shape ? "Split" : "Space", "Motion", "Saturation" };
     for (int i = 0; i < 3; ++i)
     {
         const int x = 20 + i * 330;
@@ -783,23 +909,51 @@ void InkroomEditor::paint (juce::Graphics& g)
         g.setFont (displayFont (21.0f));
         g.drawText (trays[i], x, 512, 200, 28, juce::Justification::centredLeft);
     }
+    if (shape)
+    {
+        g.setColour (muted);
+        g.setFont (uiFont (12.0f));
+        g.drawText ("ring only", 680 + 104, 518, 120, 20, juce::Justification::centredLeft);
+    }
+
     g.setColour (muted);
     g.setFont (uiFont (12.0f));
-    for (auto& [label, r] : sliderLabels)
-        g.drawText (label, r, juce::Justification::centredLeft);
-    g.drawFittedText ("The Drive lane rides the amount in time. Depth scales the whole lane.", 680, 652, 300, 36, juce::Justification::topLeft, 2);
-    g.drawFittedText ("Mutes the dry signal so you hear only the shaped room.", 350, 686, 300, 20, juce::Justification::topLeft, 1);
+    for (auto& [label, s] : sliderLabels)
+        if (s->isVisible())
+            g.drawText (label, s->getX() - 84, s->getY(), 84, 26, juce::Justification::centredLeft);
+
+    if (shape)
+    {
+        g.drawFittedText ("Each hit is split from the ring after it. Sustain, Width, Pan and Drive act on the ring only.",
+                          20, 540, 300, 36, juce::Justification::topLeft, 2, 1.0f);
+        const auto dot = hitLightArea.toFloat().removeFromLeft (12.0f).withSizeKeepingCentre (10.0f, 10.0f);
+        g.setColour (line);
+        g.fillEllipse (dot);
+        g.setColour (accent.withAlpha (juce::jlimit (0.0f, 1.0f, smoothHit)));
+        g.fillEllipse (dot);
+        g.setColour (muted);
+        g.drawText ("Lights up on each detected hit", hitLightArea.withTrimmedLeft (20), juce::Justification::centredLeft);
+        g.drawFittedText ("The Drive lane rides the amount in time. Depth scales the whole lane.", 680, 652, 300, 36, juce::Justification::topLeft, 2, 1.0f);
+        g.drawFittedText ("Mutes the hits and the dry signal so you hear only the shaped ring.", 350, 686, 300, 20, juce::Justification::topLeft, 1, 1.0f);
+    }
+    else
+    {
+        g.drawFittedText ("The Drive lane rides the amount in time. Depth scales the whole lane.", 680, 652, 300, 36, juce::Justification::topLeft, 2, 1.0f);
+        g.drawFittedText ("Mutes the dry signal so you hear only the shaped room.", 350, 686, 300, 20, juce::Justification::topLeft, 1, 1.0f);
+    }
 }
 
-void InkroomEditor::resized()
+void InkroomEditor::layoutContent()
 {
+    addSpaceBtn.setBounds (230, 40, 104, 30);
+    shapeSpaceBtn.setBounds (338, 40, 116, 30);
     presetBox.setBounds (620, 40, 220, 30);
     loopBox.setBounds (856, 40, 124, 30);
 
     room.setBounds (36, 100, 250, 236);
-    readoutArea = { 36, 352, 250, 120 };
+    readoutArea = { 36, 348, 250, 124 };
 
-    for (int l = 0; l < NumLanes; ++l)
+    for (int l = 0; l < kMaxLanes; ++l)
         laneButtons[(size_t) l].setBounds (306 + l * 96, 100, 90, 28);
     canvas.setBounds (306, 136, 658, 250);
 
@@ -813,17 +967,19 @@ void InkroomEditor::resized()
     smoothBtn.setBounds (442, 428, 70, 28);
     invertBtn.setBounds (516, 428, 64, 28);
 
-    auto row = [this] (juce::Slider& s, int x, int y) {
-        s.setBounds (x + 84, y, 216, 26);
-        const int idx = (int) s.getProperties()["labelIndex"];
-        sliderLabels[(size_t) idx].second = { x, y, 84, 26 };
-    };
+    auto row = [] (juce::Slider& s, int x, int y) { s.setBounds (x + 84, y, 216, 26); };
 
-    // Space tray.
+    // Space tray (Add space).
     typeBox.setBounds (20, 548, 150, 28);
     row (predelaySl, 20, 588);
     row (brightSl, 20, 622);
     row (outputSl, 20, 656);
+
+    // Split tray (Shape space).
+    row (hitLenSl, 20, 582);
+    row (sensSl, 20, 616);
+    row (hitsSl, 20, 650);
+    hitLightArea = { 20, 684, 300, 22 };
 
     // Motion tray.
     row (mixSl, 350, 548);

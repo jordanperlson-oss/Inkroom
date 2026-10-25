@@ -10,15 +10,22 @@ namespace ink
 {
 /** Resolution of each drawn lane across one shape loop. */
 constexpr int kN = 256;
+constexpr int kMaxLanes = 8;
 
+/** Add space: generates a new reverb and shapes its tail. */
 enum Lane { Level = 0, Size, Length, Pan, Drive, NumLanes };
 
-/** The five drawn shapes. Written by the editor (message thread), read by the audio thread. */
+/** Shape space: reshapes the room already in the audio. */
+enum ShapeLane { Sustain = 0, Punch, SLevel, Width, SPan, SDrive, NumShapeLanes };
+
+enum Space { AddSpace = 0, ShapeSpace = 1 };
+
+/** A set of drawn shapes. Written by the editor (message thread), read by the audio thread. */
 struct Lanes
 {
-    using Snapshot = std::array<std::array<float, kN>, NumLanes>;
+    using Snapshot = std::array<std::array<float, kN>, kMaxLanes>;
 
-    Lanes()
+    explicit Lanes (int numLanes) : count (numLanes)
     {
         for (auto& lane : pts)
             for (auto& p : lane)
@@ -54,7 +61,7 @@ struct Lanes
     Snapshot snapshot() const
     {
         Snapshot s {};
-        for (int l = 0; l < NumLanes; ++l)
+        for (int l = 0; l < count; ++l)
             for (int i = 0; i < kN; ++i)
                 s[(size_t) l][(size_t) i] = get (l, i);
         return s;
@@ -62,7 +69,7 @@ struct Lanes
 
     void restore (const Snapshot& s)
     {
-        for (int l = 0; l < NumLanes; ++l)
+        for (int l = 0; l < count; ++l)
             for (int i = 0; i < kN; ++i)
                 set (l, i, s[(size_t) l][(size_t) i]);
         version.fetch_add (1);
@@ -71,7 +78,7 @@ struct Lanes
     juce::String toBase64() const
     {
         juce::MemoryBlock mb;
-        for (int l = 0; l < NumLanes; ++l)
+        for (int l = 0; l < count; ++l)
             for (int i = 0; i < kN; ++i)
             {
                 const float v = get (l, i);
@@ -83,18 +90,19 @@ struct Lanes
     bool fromBase64 (const juce::String& text)
     {
         juce::MemoryBlock mb;
-        if (! mb.fromBase64Encoding (text) || mb.getSize() != sizeof (float) * (size_t) (kN * NumLanes))
+        if (! mb.fromBase64Encoding (text) || mb.getSize() != sizeof (float) * (size_t) (kN * count))
             return false;
 
         const auto* f = static_cast<const float*> (mb.getData());
-        for (int l = 0; l < NumLanes; ++l)
+        for (int l = 0; l < count; ++l)
             for (int i = 0; i < kN; ++i)
                 set (l, i, f[l * kN + i]);
         version.fetch_add (1);
         return true;
     }
 
-    std::array<std::array<std::atomic<float>, kN>, NumLanes> pts;
+    const int count;
+    std::array<std::array<std::atomic<float>, kN>, kMaxLanes> pts;
 
     /** Bumped whenever lanes change from outside the canvas (presets, undo, session load). */
     std::atomic<int> version { 0 };

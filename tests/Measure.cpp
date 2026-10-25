@@ -13,11 +13,11 @@ int main()
         InkroomProcessor proc; Head head; proc.setPlayHead (&head);
         proc.setPlayConfigDetails (2, 2, sr, bs);
         setP (proc, "type", (float) type); setP (proc, "mix", 1.0f); setP (proc, "solo", 1.0f); setP (proc, "drift", 0.0f);
-        for (int l = 0; l < ink::NumLanes; ++l) proc.lanes.fill (l, [] (float) { return 0.5f; });
-        proc.lanes.fill (ink::Level, [] (float) { return 1.0f; });
-        proc.lanes.fill (ink::Drive, [] (float) { return 0.0f; });
-        proc.lanes.fill (ink::Size, [sz] (float) { return sz; });
-        proc.lanes.fill (ink::Length, [sz] (float) { return sz; });
+        for (int l = 0; l < ink::NumLanes; ++l) proc.addLanes.fill (l, [] (float) { return 0.5f; });
+        proc.addLanes.fill (ink::Level, [] (float) { return 1.0f; });
+        proc.addLanes.fill (ink::Drive, [] (float) { return 0.0f; });
+        proc.addLanes.fill (ink::Size, [sz] (float) { return sz; });
+        proc.addLanes.fill (ink::Length, [sz] (float) { return sz; });
         proc.prepareToPlay (sr, bs);
         juce::AudioBuffer<float> buf (2, bs); juce::MidiBuffer m; juce::Random r (3);
         for (int i = 0; i < 40; ++i) { buf.clear(); proc.processBlock (buf, m); juce::Thread::sleep (20); }

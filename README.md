@@ -2,7 +2,9 @@
 
 A drawn, rhythmic reverb by Imagine Plugins. You draw how the room moves (Level, Size, Length, Pan and Drive) and every lane loops in time with the host's tempo.
 
-This is the first plugin build (MVP 0.1). It covers **Add space** from the browser prototype:
+Version 0.2 has two modes.
+
+**Add space** generates a new reverb and shapes its tail:
 
 - Room, Plate and Spring reverbs, each made of four generated spaces crossfaded by the Size and Length lanes
 - Five drawn lanes, edited as draggable points or painted freehand, with stamps, Smooth, Invert, Undo and Redo
@@ -10,7 +12,16 @@ This is the first plugin build (MVP 0.1). It covers **Add space** from the brows
 - Tail-only saturation (Tape, Tube, Fold), into the room or on the tail
 - Eight presets, and everything saves with your session
 
-Shape space (room mics), per-hit mode, curves and loading your own impulse responses are next.
+**Shape space** reshapes the room that's already in your audio (room mics, a reverb bus):
+
+- Each hit is split live from the ring after it, using 3 ms of lookahead that Logic compensates for automatically
+- Six drawn lanes: Sustain and Punch (the ring and the hits, from silent to +6 dB), Level, Width, Pan and Drive on the ring
+- Split controls (Hit length, Sensitivity, Hits) and a light that shows each detected hit
+- Seven presets
+
+The window resizes from the bottom-right corner and remembers its size.
+
+Per-hit mode, the waveform view, Added space, curves and loading your own impulse responses are next.
 
 ## Getting a build
 
@@ -31,4 +42,4 @@ The build fetches JUCE 8 automatically. JUCE has its own license terms; check th
 - `Source/PluginEditor.*`: the interface, including the drawing canvas
 - `Source/IRGen.h`: generated room, plate and spring impulse responses
 - `Source/Presets.h`: the factory presets
-- `tests/InkroomCheck.cpp`: offline check that renders audio through the engine (build with `-DINKROOM_TESTS=ON`)
+- `tests/`: offline checks that render audio through both modes and measure levels (build with `-DINKROOM_TESTS=ON`)

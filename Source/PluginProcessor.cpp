@@ -34,8 +34,22 @@ inline void satGains (float drive, float depth, float& pre, float& post) noexcep
     post = std::min (4.2f, (1.0f / (6.0f * pre)) * (1.0f + 1.6f * d));
 }
 
+/** Lane value to gain for Sustain and Punch: 0 = silent, 0.5 = unchanged, 1 = +6 dB. */
+inline float laneGain (float v) noexcept
+{
+    return v <= 0.5f ? (v / 0.5f) * (v / 0.5f) : 1.0f + (v - 0.5f) * 2.0f;
+}
+
+inline void panGains (float pan, float& gL, float& gR) noexcept
+{
+    const float x = (pan - 0.5f) * 2.0f, q = (x + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+    gL = std::min (1.0f, juce::MathConstants<float>::sqrt2 * std::cos (q));
+    gR = std::min (1.0f, juce::MathConstants<float>::sqrt2 * std::sin (q));
+}
+
 juce::String pctText (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; }
 juce::String kHzText (float hz) { return hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + "k" : juce::String (juce::roundToInt (hz)); }
+juce::String dbText (float v, int) { return (v > 0.05f ? "+" : "") + juce::String (v, 1) + " dB"; }
 } // namespace
 
 juce::AudioProcessorValueTreeState::ParameterLayout InkroomProcessor::createLayout()
@@ -43,8 +57,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout InkroomProcessor::createLayo
     using F = juce::AudioParameterFloat;
     using A = juce::AudioParameterFloatAttributes;
     using R = juce::NormalisableRange<float>;
+    using C = juce::AudioParameterChoice;
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
+    layout.add (std::make_unique<C> (juce::ParameterID { "space", 1 }, "Mode", juce::StringArray { "Add space", "Shape space" }, 0));
     layout.add (std::make_unique<F> (juce::ParameterID { "mix", 1 }, "Mix", R (0.0f, 1.0f, 0.01f), 0.7f, A().withStringFromValueFunction (pctText)));
     layout.add (std::make_unique<F> (juce::ParameterID { "drift", 1 }, "Drift", R (0.0f, 1.0f, 0.01f), 0.25f, A().withStringFromValueFunction (pctText)));
     layout.add (std::make_unique<F> (juce::ParameterID { "swing", 1 }, "Swing", R (0.0f, 0.7f, 0.01f), 0.12f,
@@ -56,13 +72,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout InkroomProcessor::createLayo
     layout.add (std::make_unique<F> (juce::ParameterID { "depth", 1 }, "Drive depth", R (0.0f, 1.0f, 0.01f), 0.8f, A().withStringFromValueFunction (pctText)));
     layout.add (std::make_unique<F> (juce::ParameterID { "tone", 1 }, "Drive tone", R (0.0f, 1.0f, 0.01f), 0.72f,
         A().withStringFromValueFunction ([] (float v, int) { return kHzText (600.0f * std::pow (30.0f, v)); })));
-    layout.add (std::make_unique<F> (juce::ParameterID { "output", 1 }, "Tail level", R (-24.0f, 12.0f, 0.1f), 0.0f,
-        A().withStringFromValueFunction ([] (float v, int) { return (v > 0.05f ? "+" : "") + juce::String (v, 1) + " dB"; })));
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "type", 1 }, "Reverb type", juce::StringArray { "Room", "Plate", "Spring" }, 0));
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "character", 1 }, "Drive character", juce::StringArray { "Tape", "Tube", "Fold" }, 0));
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "placement", 1 }, "Drive placement", juce::StringArray { "Into room", "On tail" }, 1));
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "loop", 1 }, "Shape loop", juce::StringArray { "2 beats", "1 bar", "2 bars", "4 bars" }, 1));
+    layout.add (std::make_unique<F> (juce::ParameterID { "output", 1 }, "Tail level", R (-24.0f, 12.0f, 0.1f), 0.0f, A().withStringFromValueFunction (dbText)));
+    layout.add (std::make_unique<C> (juce::ParameterID { "type", 1 }, "Reverb type", juce::StringArray { "Room", "Plate", "Spring" }, 0));
+    layout.add (std::make_unique<C> (juce::ParameterID { "character", 1 }, "Drive character", juce::StringArray { "Tape", "Tube", "Fold" }, 0));
+    layout.add (std::make_unique<C> (juce::ParameterID { "placement", 1 }, "Drive placement", juce::StringArray { "Into room", "On tail" }, 1));
+    layout.add (std::make_unique<C> (juce::ParameterID { "loop", 1 }, "Shape loop", juce::StringArray { "2 beats", "1 bar", "2 bars", "4 bars" }, 1));
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "solo", 1 }, "Tail solo", false));
+    layout.add (std::make_unique<F> (juce::ParameterID { "hitlen", 1 }, "Hit length", R (5.0f, 150.0f, 1.0f), 40.0f,
+        A().withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v)) + " ms"; })));
+    layout.add (std::make_unique<F> (juce::ParameterID { "sens", 1 }, "Sensitivity", R (0.0f, 1.0f, 0.01f), 0.5f, A().withStringFromValueFunction (pctText)));
+    layout.add (std::make_unique<F> (juce::ParameterID { "hits", 1 }, "Hits", R (-24.0f, 6.0f, 0.1f), 0.0f, A().withStringFromValueFunction (dbText)));
     return layout;
 }
 
@@ -88,11 +107,16 @@ InkroomProcessor::InkroomProcessor()
     pLoop = apvts.getRawParameterValue ("loop");
     pSolo = apvts.getRawParameterValue ("solo");
     pOutput = apvts.getRawParameterValue ("output");
+    pSpace = apvts.getRawParameterValue ("space");
+    pHitLen = apvts.getRawParameterValue ("hitlen");
+    pSens = apvts.getRawParameterValue ("sens");
+    pHits = apvts.getRawParameterValue ("hits");
 
     for (auto& v : uiVals)
         v.store (0.5f);
 
-    loadPreset (0);
+    loadPreset (ink::ShapeSpace, 0);
+    loadPreset (ink::AddSpace, 0);
     startTimerHz (10);
 }
 
@@ -106,13 +130,28 @@ int InkroomProcessor::loopBeats() const
     return kLoopBeats[juce::jlimit (0, 3, (int) pLoop->load())];
 }
 
-void InkroomProcessor::loadPreset (int index)
+int InkroomProcessor::space() const
 {
-    const auto& list = ink::presets();
+    return pSpace->load() > 0.5f ? ink::ShapeSpace : ink::AddSpace;
+}
+
+void InkroomProcessor::setSpace (int s)
+{
+    if (auto* param = apvts.getParameter ("space"))
+        param->setValueNotifyingHost (param->convertTo0to1 ((float) s));
+}
+
+void InkroomProcessor::loadPreset (int sp, int index)
+{
+    const bool shape = sp == ink::ShapeSpace;
+    const auto& list = shape ? ink::shapePresets() : ink::presets();
     if (index < 0 || index >= (int) list.size())
         return;
 
     const auto& p = list[(size_t) index];
+    auto& lanes = lanesFor (sp);
+    if (shape)
+        ink::shapeDefaults (lanes);
     p.apply (lanes);
     lanes.version.fetch_add (1);
 
@@ -121,10 +160,13 @@ void InkroomProcessor::loadPreset (int index)
             param->setValueNotifyingHost (param->convertTo0to1 ((float) idx));
     };
     setChoice ("loop", p.loop);
-    setChoice ("type", p.type);
     setChoice ("character", p.character);
-    setChoice ("placement", p.placement);
-    currentPreset.store (index);
+    if (! shape)
+    {
+        setChoice ("type", p.type);
+        setChoice ("placement", p.placement);
+    }
+    currentPreset[(size_t) sp].store (index);
 }
 
 bool InkroomProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -147,6 +189,12 @@ void InkroomProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     predelay.setMaximumDelayInSamples ((int) (0.2 * sr) + 2);
     predelay.prepare (spec);
 
+    lookaheadSamples = juce::jmax (1, (int) std::round (0.003 * sr));
+    lookahead.setMaximumDelayInSamples (lookaheadSamples + 2);
+    lookahead.prepare (spec);
+    lookahead.setDelay ((float) lookaheadSamples);
+    setLatencySamples (lookaheadSamples);
+
     brightLP.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
     toneLP.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
     satHP.setType (juce::dsp::StateVariableTPTFilterType::highpass);
@@ -157,13 +205,16 @@ void InkroomProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     }
     satHP.setCutoffFrequency (30.0f);
 
-    sendBuf.setSize (2, maxBlock);
-    convTmp.setSize (2, maxBlock);
-    wetBuf.setSize (2, maxBlock);
+    for (auto* b : { &sendBuf, &convTmp, &wetBuf, &undelayed, &delayed, &addOut, &shapeOut })
+        b->setSize (2, maxBlock);
     for (auto& v : pXf)
         v.assign ((size_t) maxBlock, 0.0f);
-    for (auto* v : { &pLev, &pPan, &pPre, &pPost })
+    for (auto* v : { &pLev, &pPan, &pPre, &pPost, &qSus, &qPunch, &qLev, &qWidth, &qPan, &qPre, &qPost })
         v->assign ((size_t) maxBlock, 0.0f);
+
+    detFast = detSlow = mask = 0.0f;
+    holdLeft = 0;
+    modeFade = space() == ink::ShapeSpace ? 1.0f : 0.0f;
 
     if (builtType != (int) pType->load() || std::abs (builtRate - sr) > 0.5)
         rebuildImpulses();
@@ -188,7 +239,18 @@ void InkroomProcessor::timerCallback()
         rebuildImpulses();
 }
 
-float InkroomProcessor::laneValue (int lane, double p, long long k, float drift) const noexcept
+void InkroomProcessor::loopPhase (double ppq, double& p, long long& k) const noexcept
+{
+    const double split = 0.5 + pSwing->load() * 0.25;
+    const double B = std::max (0.0, ppq);
+    const double e8 = B * 2.0, ei = std::floor (e8), u = e8 - ei;
+    const double v = u < split ? 0.5 * u / split : 0.5 + 0.5 * (u - split) / (1.0 - split);
+    const double loops = ((ei + v) / 2.0) / (double) loopBeats(), kf = std::floor (loops);
+    p = loops - kf;
+    k = (long long) kf;
+}
+
+float InkroomProcessor::laneValue (const ink::Lanes& lanes, int lane, double p, long long k, float drift) const noexcept
 {
     float v = lanes.sample (lane, p);
     if (drift > 0.0f)
@@ -251,19 +313,63 @@ void InkroomProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
 void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start, int len, double ppq0, double pps)
 {
-    const float mix = pMix->load(), drift = pDrift->load(), swing = pSwing->load(), depth = pDepth->load();
+    // Keep an undelayed copy for hit detection, and delay the audio itself by the lookahead.
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const float* in = buffer.getReadPointer (ch, start);
+        float* u = undelayed.getWritePointer (ch);
+        float* d = delayed.getWritePointer (ch);
+        for (int i = 0; i < len; ++i)
+        {
+            u[i] = in[i];
+            lookahead.pushSample (ch, in[i]);
+            d[i] = lookahead.popSample (ch);
+        }
+    }
+
+    toneLP.setCutoffFrequency (juce::jmin (20000.0f, 600.0f * std::pow (30.0f, pTone->load())));
+
+    const bool toShape = space() == ink::ShapeSpace;
+    const bool needAdd = ! toShape || modeFade < 1.0f;
+    const bool needShape = toShape || modeFade > 0.0f;
+    if (needAdd)   processAdd (len, ppq0, pps, ! toShape);
+    if (needShape) processShape (len, ppq0, pps, toShape);
+
+    // 20 ms crossfade when switching modes.
+    const float step = 1.0f / (0.02f * (float) sr);
+    const float target = toShape ? 1.0f : 0.0f;
+    float* o0 = buffer.getWritePointer (0, start);
+    float* o1 = buffer.getWritePointer (1, start);
+    const float* a0 = addOut.getReadPointer (0);
+    const float* a1 = addOut.getReadPointer (1);
+    const float* s0 = shapeOut.getReadPointer (0);
+    const float* s1 = shapeOut.getReadPointer (1);
+    float g = modeFade;
+    for (int i = 0; i < len; ++i)
+    {
+        g = g < target ? std::min (target, g + step) : std::max (target, g - step);
+        const float wa = needAdd ? 1.0f - g : 0.0f, ws = needShape ? g : 0.0f;
+        o0[i] = (needAdd ? a0[i] : 0.0f) * wa + (needShape ? s0[i] : 0.0f) * ws;
+        o1[i] = (needAdd ? a1[i] : 0.0f) * wa + (needShape ? s1[i] : 0.0f) * ws;
+    }
+    modeFade = g;
+}
+
+void InkroomProcessor::processAdd (int len, double ppq0, double pps, bool publishUi)
+{
+    const float mix = pMix->load(), drift = pDrift->load(), depth = pDepth->load();
     const int charType = (int) pChar->load();
     const bool intoRoom = (int) pPlace->load() == 0;
     const bool solo = pSolo->load() > 0.5f;
-    const double beats = (double) loopBeats();
+
+    for (int ch = 0; ch < 2; ++ch)
+        addOut.copyFrom (ch, 0, delayed, ch, 0, len);
 
     predelay.setDelay ((float) (pPredelay->load() * 0.001 * sr));
     brightLP.setCutoffFrequency (1500.0f * std::pow (12.0f, pBright->load()));
-    toneLP.setCutoffFrequency (juce::jmin (20000.0f, 600.0f * std::pow (30.0f, pTone->load())));
 
     // 1. Lane values at control rate, smoothed per sample into gain curves.
     const float coef = 1.0f - std::exp (-1.0f / (0.002f * (float) sr));
-    const double split = 0.5 + swing * 0.25;
     std::array<float, 4> tXf = sXf;
     float tLev = sLev, tPan = sPan, tPre = sPre, tPost = sPost;
 
@@ -271,15 +377,11 @@ void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
     {
         if (i % kControlStep == 0)
         {
-            const double B = std::max (0.0, ppq0 + i * pps);
-            const double e8 = B * 2.0, ei = std::floor (e8), u = e8 - ei;
-            const double v = u < split ? 0.5 * u / split : 0.5 + 0.5 * (u - split) / (1.0 - split);
-            const double loops = ((ei + v) / 2.0) / beats, kf = std::floor (loops), p = loops - kf;
-            const auto k = (long long) kf;
-
+            double p; long long k;
+            loopPhase (ppq0 + i * pps, p, k);
             std::array<float, ink::NumLanes> vals {};
             for (int l = 0; l < ink::NumLanes; ++l)
-                vals[(size_t) l] = laneValue (l, p, k, drift);
+                vals[(size_t) l] = laneValue (addLanes, l, p, k, drift);
 
             const float s = vals[ink::Size], l = vals[ink::Length];
             const float w[4] = { (1 - s) * (1 - l), (1 - s) * l, s * (1 - l), s * l };
@@ -289,7 +391,7 @@ void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
             tPan = vals[ink::Pan];
             satGains (vals[ink::Drive], depth, tPre, tPost);
 
-            if (i == 0)
+            if (i == 0 && publishUi)
             {
                 uiPhase.store ((float) p);
                 for (int c = 0; c < ink::NumLanes; ++c)
@@ -311,7 +413,7 @@ void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
     // 2. Send: optional drive into the room, then pre-delay.
     for (int ch = 0; ch < 2; ++ch)
     {
-        const float* in = buffer.getReadPointer (ch, start);
+        const float* in = addOut.getReadPointer (ch);
         float* send = sendBuf.getWritePointer (ch);
         for (int i = 0; i < len; ++i)
         {
@@ -349,11 +451,10 @@ void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
     const int typeIdx = juce::jlimit (0, 2, builtType);
     const float wetGain = mix * kTailCalibration * juce::Decibels::decibelsToGain (pOutput->load() + kTypeTrimDb[typeIdx]);
     const float dryGain = solo ? 0.0f : 1.0f;
-    const float halfPi = juce::MathConstants<float>::halfPi;
     float energy = 0.0f;
 
-    float* outL = buffer.getWritePointer (0, start);
-    float* outR = buffer.getWritePointer (1, start);
+    float* outL = addOut.getWritePointer (0);
+    float* outR = addOut.getWritePointer (1);
     float* wl = wetBuf.getWritePointer (0);
     float* wr = wetBuf.getWritePointer (1);
 
@@ -366,9 +467,8 @@ void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
             l = saturate (0, l, pPre[(size_t) i], pPost[(size_t) i], charType);
             r = saturate (1, r, pPre[(size_t) i], pPost[(size_t) i], charType);
         }
-        const float x = (pPan[(size_t) i] - 0.5f) * 2.0f;
-        const float gL = std::min (1.0f, juce::MathConstants<float>::sqrt2 * std::cos ((x + 1.0f) * halfPi * 0.5f));
-        const float gR = std::min (1.0f, juce::MathConstants<float>::sqrt2 * std::sin ((x + 1.0f) * halfPi * 0.5f));
+        float gL, gR;
+        panGains (pPan[(size_t) i], gL, gR);
         const float g = pLev[(size_t) i] * wetGain;
         l *= g * gL;
         r *= g * gR;
@@ -377,15 +477,123 @@ void InkroomProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
         outR[i] = outR[i] * dryGain + r;
     }
 
-    const float rms = std::sqrt (energy / (2.0f * (float) juce::jmax (1, len)));
-    uiEnergy.store (juce::jmin (1.0f, rms * 7.0f));
+    if (publishUi)
+        uiEnergy.store (juce::jmin (1.0f, std::sqrt (energy / (2.0f * (float) juce::jmax (1, len))) * 7.0f));
+}
+
+void InkroomProcessor::processShape (int len, double ppq0, double pps, bool publishUi)
+{
+    const float mix = pMix->load(), drift = pDrift->load(), depth = pDepth->load();
+    const int charType = (int) pChar->load();
+    const bool solo = pSolo->load() > 0.5f;
+    const float hitsGain = solo ? 0.0f : juce::Decibels::decibelsToGain (pHits->load(), -24.0f);
+    const float dryGain = solo ? 0.0f : 1.0f - mix;
+
+    // 1. Lanes at control rate, smoothed per sample.
+    const float coef = 1.0f - std::exp (-1.0f / (0.002f * (float) sr));
+    float tSus = hSus, tPunch = hPunch, tLev = hLev, tWidth = hWidth, tPan = hPan, tPre = hPre, tPost = hPost;
+    for (int i = 0; i < len; ++i)
+    {
+        if (i % kControlStep == 0)
+        {
+            double p; long long k;
+            loopPhase (ppq0 + i * pps, p, k);
+            std::array<float, ink::NumShapeLanes> v {};
+            for (int l = 0; l < ink::NumShapeLanes; ++l)
+                v[(size_t) l] = laneValue (shapeLanes, l, p, k, drift);
+
+            tSus = laneGain (v[ink::Sustain]);
+            tPunch = laneGain (v[ink::Punch]);
+            tLev = v[ink::SLevel] * v[ink::SLevel];
+            tWidth = v[ink::Width] * 2.0f;
+            tPan = v[ink::SPan];
+            satGains (v[ink::SDrive], depth, tPre, tPost);
+
+            if (i == 0 && publishUi)
+            {
+                uiPhase.store ((float) p);
+                for (int c = 0; c < ink::NumShapeLanes; ++c)
+                    uiVals[(size_t) c].store (v[(size_t) c]);
+            }
+        }
+        hSus += coef * (tSus - hSus);       qSus[(size_t) i] = hSus;
+        hPunch += coef * (tPunch - hPunch); qPunch[(size_t) i] = hPunch;
+        hLev += coef * (tLev - hLev);       qLev[(size_t) i] = hLev;
+        hWidth += coef * (tWidth - hWidth); qWidth[(size_t) i] = hWidth;
+        hPan += coef * (tPan - hPan);       qPan[(size_t) i] = hPan;
+        hPre += coef * (tPre - hPre);       qPre[(size_t) i] = hPre;
+        hPost += coef * (tPost - hPost);    qPost[(size_t) i] = hPost;
+    }
+
+    // 2. Split each hit from the ring after it. Detection runs on the undelayed signal,
+    //    so the mask opens just before the hit reaches the delayed audio.
+    const float fsr = (float) sr;
+    // Onset test: short-term power (1 ms) jumping above the recent level (40 ms) by a margin.
+    // Sensitivity 0 needs a 14 dB jump, 50% needs 9 dB, 100% needs 4 dB.
+    const float aShort = 1.0f - std::exp (-1.0f / (fsr * 0.001f)), aLong = 1.0f - std::exp (-1.0f / (fsr * 0.04f));
+    const float up = 1.0f - std::exp (-1.0f / (fsr * 0.0008f)), down = std::exp (-1.0f / (fsr * 0.012f));
+    const float jump = std::pow (10.0f, (14.0f - pSens->load() * 10.0f) / 10.0f), floor = 0.002f * 0.002f;
+    const int hold = (int) (pHitLen->load() * 0.001f * fsr);
+
+    const float* u0 = undelayed.getReadPointer (0);
+    const float* u1 = undelayed.getReadPointer (1);
+    const float* d0 = delayed.getReadPointer (0);
+    const float* d1 = delayed.getReadPointer (1);
+    float* o0 = shapeOut.getWritePointer (0);
+    float* o1 = shapeOut.getWritePointer (1);
+    float energy = 0.0f, hitPeak = 0.0f;
+
+    for (int i = 0; i < len; ++i)
+    {
+        const float x = std::max (u0[i] * u0[i], u1[i] * u1[i]);
+        detFast += aShort * (x - detFast);
+        detSlow += aLong * (x - detSlow);
+        if (detFast > floor && detFast > detSlow * jump && holdLeft < hold / 2)
+            holdLeft = hold;
+        const bool open = holdLeft > 0;
+        if (holdLeft > 0)
+            --holdLeft;
+        mask = open ? mask + (1.0f - mask) * up : mask * down;
+        hitPeak = std::max (hitPeak, mask);
+
+        const float m = mask;
+        const float hg = hitsGain * qPunch[(size_t) i];
+        const float hl = d0[i] * m * hg, hr = d1[i] * m * hg;
+
+        // Drive blends in with its amount, so a neutral Drive lane leaves the ring untouched.
+        const float cl = d0[i] * (1.0f - m) * qSus[(size_t) i], cr = d1[i] * (1.0f - m) * qSus[(size_t) i];
+        const float blend = juce::jlimit (0.0f, 1.0f, (qPre[(size_t) i] - 0.04f) / 0.7f);
+        float rl = cl + (saturate (0, cl, qPre[(size_t) i], qPost[(size_t) i], charType) - cl) * blend;
+        float rr = cr + (saturate (1, cr, qPre[(size_t) i], qPost[(size_t) i], charType) - cr) * blend;
+
+        const float mid = (rl + rr) * 0.5f, side = (rl - rr) * 0.5f * qWidth[(size_t) i];
+        rl = mid + side;
+        rr = mid - side;
+        float gL, gR;
+        panGains (qPan[(size_t) i], gL, gR);
+
+        const float wl = (hl + rl * gL) * qLev[(size_t) i];
+        const float wr = (hr + rr * gR) * qLev[(size_t) i];
+        energy += wl * wl + wr * wr;
+        o0[i] = wl * mix + d0[i] * dryGain;
+        o1[i] = wr * mix + d1[i] * dryGain;
+    }
+
+    if (publishUi)
+    {
+        uiEnergy.store (juce::jmin (1.0f, std::sqrt (energy / (2.0f * (float) juce::jmax (1, len))) * 4.0f));
+        uiHit.store (hitPeak);
+    }
 }
 
 void InkroomProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
-    state.setProperty ("lanes", lanes.toBase64(), nullptr);
-    state.setProperty ("preset", currentPreset.load(), nullptr);
+    state.setProperty ("lanesAdd", addLanes.toBase64(), nullptr);
+    state.setProperty ("lanesShape", shapeLanes.toBase64(), nullptr);
+    state.setProperty ("presetAdd", currentPreset[0].load(), nullptr);
+    state.setProperty ("presetShape", currentPreset[1].load(), nullptr);
+    state.setProperty ("editorScale", editorScale.load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -397,8 +605,12 @@ void InkroomProcessor::setStateInformation (const void* data, int sizeInBytes)
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.hasType (apvts.state.getType()))
             return;
-        lanes.fromBase64 (state.getProperty ("lanes").toString());
-        currentPreset.store ((int) state.getProperty ("preset", -1));
+        // Sessions saved by 0.1 stored the Add space lanes as "lanes".
+        addLanes.fromBase64 (state.getProperty (state.hasProperty ("lanesAdd") ? "lanesAdd" : "lanes").toString());
+        shapeLanes.fromBase64 (state.getProperty ("lanesShape").toString());
+        currentPreset[0].store ((int) state.getProperty ("presetAdd", state.getProperty ("preset", -1)));
+        currentPreset[1].store ((int) state.getProperty ("presetShape", -1));
+        editorScale.store ((float) state.getProperty ("editorScale", -1.0f));
         apvts.replaceState (state);
     }
 }

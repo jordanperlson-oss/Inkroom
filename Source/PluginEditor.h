@@ -11,11 +11,29 @@ const juce::Colour line    { 0xff363140 };
 const juce::Colour text    { 0xffece6dc };
 const juce::Colour muted   { 0xffa39bab };
 const juce::Colour accent  { 0xffe9c27f };
-const std::array<juce::Colour, NumLanes> laneColour {
-    juce::Colour (0xfff28aa6), juce::Colour (0xff9d8eff), juce::Colour (0xff5ccab8),
-    juce::Colour (0xffe8b85e), juce::Colour (0xfff47b4c) };
-const std::array<const char*, NumLanes> laneName { "Level", "Size", "Length", "Pan", "Drive" };
+
+const juce::Colour pink    { 0xfff28aa6 };
+const juce::Colour violet  { 0xff9d8eff };
+const juce::Colour teal    { 0xff5ccab8 };
+const juce::Colour amber   { 0xffe8b85e };
+const juce::Colour ember   { 0xfff47b4c };
+const juce::Colour blue    { 0xff7db4ff };
+
+struct LaneInfo { const char* name; juce::Colour colour; const char* top; const char* bot; };
+
+inline int laneCount (int space) { return space == ShapeSpace ? (int) NumShapeLanes : (int) NumLanes; }
+
+inline const LaneInfo& laneInfo (int space, int lane)
+{
+    static const LaneInfo add[NumLanes] = {
+        { "Level", pink, "Full", "Silent" }, { "Size", violet, "Hall", "Closet" }, { "Length", teal, "4.5 s", "0.3 s" },
+        { "Pan", amber, "Right", "Left" }, { "Drive", ember, "Hot", "Clean" } };
+    static const LaneInfo shape[NumShapeLanes] = {
+        { "Sustain", violet, "+6 dB", "Choked" }, { "Punch", blue, "+6 dB", "Muted" }, { "Level", pink, "Full", "Silent" },
+        { "Width", teal, "Wide", "Mono" }, { "Pan", amber, "Right", "Left" }, { "Drive", ember, "Hot", "Clean" } };
+    return space == ShapeSpace ? shape[lane] : add[lane];
 }
+} // namespace ink::ui
 
 class InkLook : public juce::LookAndFeel_V4
 {
@@ -35,6 +53,7 @@ public:
 
     explicit ShapeCanvas (InkroomProcessor& p) : proc (p) {}
 
+    void setSpace (int s)   { space = s; lane = 0; invalidate(); repaint(); }
     void setLane (int l)    { lane = l; invalidate(); repaint(); }
     void setMode (Mode m)   { mode = m; invalidate(); repaint(); }
     void setGrid (int g)    { grid = g; repaint(); }
@@ -55,6 +74,7 @@ public:
 private:
     struct Node { float x, y; };
 
+    ink::Lanes& lanes() const { return proc.lanesFor (space); }
     juce::Rectangle<float> plotArea() const;
     float phaseAtX (float x) const;
     float valueAtY (float y) const;
@@ -65,7 +85,7 @@ private:
     void brushAt (juce::Point<float>);
 
     InkroomProcessor& proc;
-    int lane = 0, grid = 4;
+    int space = ink::AddSpace, lane = 0, grid = 4;
     Mode mode = Mode::Points;
     std::vector<Node> nodes;
     bool nodesValid = false;
@@ -73,17 +93,24 @@ private:
     float lastV = 0.0f;
 };
 
-/** The ink blot: grows with Size, drifts with Pan, glows with Level, warms with Drive. */
+/** The ink blot: grows with Size (or Sustain), drifts with Pan, glows with Level, warms with Drive. */
 class RoomView : public juce::Component
 {
 public:
-    void setState (const std::array<float, ink::NumLanes>& v, float e, int t, float d) { vals = v; energy = e; type = t; depth = d; }
+    struct State { float level = 0.5f, size = 0.5f, pan = 0.5f, drive = 0.1f, width = 0.5f, energy = 0.3f, depth = 0.8f; int type = 0; bool shape = false; };
+    void setState (const State& s) { st = s; }
     void paint (juce::Graphics&) override;
 
 private:
-    std::array<float, ink::NumLanes> vals {};
-    float energy = 0.3f, depth = 0.8f;
-    int type = 0;
+    State st;
+};
+
+/** Holds the whole interface at its design size; the editor scales it to the window. */
+class ScaledContent : public juce::Component
+{
+public:
+    std::function<void (juce::Graphics&)> painter;
+    void paint (juce::Graphics& g) override { if (painter) painter (g); }
 };
 
 class InkroomEditor : public juce::AudioProcessorEditor,
@@ -93,17 +120,22 @@ public:
     explicit InkroomEditor (InkroomProcessor&);
     ~InkroomEditor() override;
 
-    void paint (juce::Graphics&) override;
+    void paint (juce::Graphics&) override {}
     void resized() override;
+
+    static constexpr int designW = 1000, designH = 720;
 
 private:
     using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
+    struct HistoryEntry { int space; ink::Lanes::Snapshot snap; };
+
     void timerCallback() override;
-    void selectLane (int l);
-    void setMode (ShapeCanvas::Mode m);
+    void paintContent (juce::Graphics&);
+    void layoutContent();
+    void applySpace (int sp);
     void checkpoint();
     void undo();
     void redo();
@@ -113,29 +145,35 @@ private:
     void setupCombo (juce::ComboBox&, const juce::String& paramId, std::unique_ptr<ComboAtt>&);
     void setupSlider (juce::Slider&, const juce::String& paramId, std::unique_ptr<SliderAtt>&, const juce::String& label);
     juce::String formatValue (int lane, float v) const;
+    ink::Lanes& shownLanes() { return proc.lanesFor (shownSpace); }
 
     InkroomProcessor& proc;
     InkLook look;
+    ScaledContent content;
     ShapeCanvas canvas;
     RoomView room;
+    std::unique_ptr<juce::PropertiesFile> settings;
 
     juce::ComboBox presetBox, loopBox, typeBox, charBox, placeBox, gridBox;
-    std::array<juce::TextButton, ink::NumLanes> laneButtons;
+    juce::TextButton addSpaceBtn { "Add space" }, shapeSpaceBtn { "Shape space" };
+    std::array<juce::TextButton, ink::kMaxLanes> laneButtons;
     juce::TextButton pointsBtn { "Points" }, brushBtn { "Brush" }, smoothBtn { "Smooth" }, invertBtn { "Invert" },
                      undoBtn { "Undo" }, redoBtn { "Redo" }, soloBtn { "Tail solo" };
     std::array<juce::TextButton, 5> stampBtns;
-    juce::Slider predelaySl, brightSl, outputSl, mixSl, driftSl, swingSl, depthSl, toneSl;
+    juce::Slider predelaySl, brightSl, outputSl, mixSl, driftSl, swingSl, depthSl, toneSl, hitLenSl, sensSl, hitsSl;
 
     std::unique_ptr<ComboAtt> loopAtt, typeAtt, charAtt, placeAtt;
-    std::unique_ptr<SliderAtt> predelayAtt, brightAtt, outputAtt, mixAtt, driftAtt, swingAtt, depthAtt, toneAtt;
+    std::unique_ptr<SliderAtt> predelayAtt, brightAtt, outputAtt, mixAtt, driftAtt, swingAtt, depthAtt, toneAtt,
+                               hitLenAtt, sensAtt, hitsAtt;
     std::unique_ptr<ButtonAtt> soloAtt;
 
-    std::vector<std::pair<juce::String, juce::Rectangle<int>>> sliderLabels;
-    juce::Rectangle<int> readoutArea;
+    std::vector<std::pair<juce::String, juce::Slider*>> sliderLabels;
+    juce::Rectangle<int> readoutArea, hitLightArea;
 
-    std::vector<ink::Lanes::Snapshot> undoStack, redoStack;
+    std::vector<HistoryEntry> undoStack, redoStack;
+    int shownSpace = -1;
     int seenVersion = -1;
-    float smoothEnergy = 0.3f;
+    float smoothEnergy = 0.3f, smoothHit = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InkroomEditor)
 };
