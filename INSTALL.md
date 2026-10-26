@@ -4,13 +4,15 @@ This build is for testing on your own Mac. It isn't notarized by Apple yet, so m
 
 ## 1. Copy the plugin
 
-Open Finder, press **Shift + Cmd + G**, and go to:
+Download **Inkroom-mac.dmg** from the repo's Releases page (the newest build is always at `releases/latest`) and double-click it to open.
+
+Then open Finder, press **Shift + Cmd + G**, and go to:
 
 ```
 ~/Library/Audio/Plug-Ins/Components
 ```
 
-Drag **Inkroom.component** into that folder.
+Drag **Inkroom.component** from the disk image into that folder. If an older Inkroom is already there, choose **Replace**.
 
 (Optional, for other DAWs: put **Inkroom.vst3** in `~/Library/Audio/Plug-Ins/VST3`.)
 

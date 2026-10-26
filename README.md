@@ -25,7 +25,7 @@ Per-hit mode, the waveform view, Added space, curves and loading your own impuls
 
 ## Getting a build
 
-Every push builds the Mac plugin on GitHub. Open the **Actions** tab, click the latest **Build Mac plugin** run, and download **Inkroom-mac** under Artifacts. Then follow [INSTALL.md](INSTALL.md).
+Every push builds the Mac plugin on GitHub and publishes it as the latest release. Download **Inkroom-mac.dmg** from https://github.com/jordanperlson-oss/Inkroom/releases/latest and follow [INSTALL.md](INSTALL.md).
 
 ## Building it yourself
 

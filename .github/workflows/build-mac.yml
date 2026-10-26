@@ -8,6 +8,8 @@ jobs:
   mac:
     runs-on: macos-14
     timeout-minutes: 60
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -39,10 +41,26 @@ jobs:
           cp INSTALL.md dist/
           cd dist && zip -r -y ../Inkroom-mac.zip .
 
+      - name: Make disk image
+        run: hdiutil create -volname "Inkroom" -srcfolder dist -ov -format UDZO Inkroom-mac.dmg
+
       - uses: actions/upload-artifact@v4
         with:
           name: Inkroom-mac
           path: Inkroom-mac.zip
+
+      - name: Publish as the latest release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(defaults read "$PWD/dist/Inkroom.component/Contents/Info.plist" CFBundleShortVersionString)
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest Inkroom-mac.dmg Inkroom-mac.zip \
+            --target "$GITHUB_SHA" \
+            --title "Inkroom $VERSION" \
+            --notes "Latest build ($VERSION). Download Inkroom-mac.dmg, open it, and follow INSTALL.md inside." \
+            --latest
 
       - name: Validate with Logic's checker (auval)
         run: |
