@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
-project(Inkroom VERSION 0.1.0)
+# Every build gets its own version (0.2.<build number>) so macOS and Logic never
+# mistake a new build for a cached older one.
+if(NOT DEFINED INKROOM_BUILD)
+    set(INKROOM_BUILD 0)
+endif()
+project(Inkroom VERSION 0.2.${INKROOM_BUILD})
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
