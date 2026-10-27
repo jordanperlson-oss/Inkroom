@@ -1,39 +1,8 @@
 #pragma once
 
 #include "PluginProcessor.h"
-
-namespace ink::ui
-{
-const juce::Colour paper   { 0xff17151c };
-const juce::Colour panel   { 0xff1f1c26 };
-const juce::Colour panel2  { 0xff26222f };
-const juce::Colour line    { 0xff363140 };
-const juce::Colour text    { 0xffece6dc };
-const juce::Colour muted   { 0xffa39bab };
-const juce::Colour accent  { 0xffe9c27f };
-
-const juce::Colour pink    { 0xfff28aa6 };
-const juce::Colour violet  { 0xff9d8eff };
-const juce::Colour teal    { 0xff5ccab8 };
-const juce::Colour amber   { 0xffe8b85e };
-const juce::Colour ember   { 0xfff47b4c };
-const juce::Colour blue    { 0xff7db4ff };
-
-struct LaneInfo { const char* name; juce::Colour colour; const char* top; const char* bot; };
-
-inline int laneCount (int space) { return space == ShapeSpace ? (int) NumShapeLanes : (int) NumLanes; }
-
-inline const LaneInfo& laneInfo (int space, int lane)
-{
-    static const LaneInfo add[NumLanes] = {
-        { "Level", pink, "Full", "Silent" }, { "Size", violet, "Hall", "Closet" }, { "Length", teal, "4.5 s", "0.3 s" },
-        { "Pan", amber, "Right", "Left" }, { "Drive", ember, "Hot", "Clean" } };
-    static const LaneInfo shape[NumShapeLanes] = {
-        { "Sustain", violet, "+6 dB", "Choked" }, { "Punch", blue, "+6 dB", "Muted" }, { "Level", pink, "Full", "Silent" },
-        { "Width", teal, "Wide", "Mono" }, { "Pan", amber, "Right", "Left" }, { "Drive", ember, "Hot", "Clean" } };
-    return space == ShapeSpace ? shape[lane] : add[lane];
-}
-} // namespace ink::ui
+#include "UiCommon.h"
+#include "ShapeCanvas.h"
 
 class InkLook : public juce::LookAndFeel_V4
 {
@@ -42,55 +11,8 @@ public:
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
     juce::Font getTextButtonFont (juce::TextButton&, int) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;
+    juce::Font getPopupMenuFont() override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
-};
-
-/** The drawing surface: one loop of the selected lane, with the others faint behind it. */
-class ShapeCanvas : public juce::Component
-{
-public:
-    enum class Mode { Points, Brush };
-
-    explicit ShapeCanvas (InkroomProcessor& p) : proc (p) {}
-
-    void setSpace (int s)   { space = s; lane = 0; invalidate(); repaint(); }
-    void setLane (int l)    { lane = l; invalidate(); repaint(); }
-    void setMode (Mode m)   { mode = m; invalidate(); repaint(); }
-    void setGrid (int g)    { grid = g; repaint(); }
-    void invalidate()       { nodes.clear(); nodesValid = false; hover = -1; drag = -1; }
-    int getLane() const     { return lane; }
-    int getGrid() const     { return grid; }
-
-    std::function<void()> onBeforeEdit;
-
-    void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseDrag (const juce::MouseEvent&) override;
-    void mouseUp (const juce::MouseEvent&) override;
-    void mouseMove (const juce::MouseEvent&) override;
-    void mouseExit (const juce::MouseEvent&) override;
-    void mouseDoubleClick (const juce::MouseEvent&) override;
-
-private:
-    struct Node { float x, y; };
-
-    ink::Lanes& lanes() const { return proc.lanesFor (space); }
-    juce::Rectangle<float> plotArea() const;
-    float phaseAtX (float x) const;
-    float valueAtY (float y) const;
-    float snapX (float phase, bool snap) const;
-    void buildNodes();
-    void writeNodes();
-    int nodeAt (juce::Point<float>) const;
-    void brushAt (juce::Point<float>);
-
-    InkroomProcessor& proc;
-    int space = ink::AddSpace, lane = 0, grid = 4;
-    Mode mode = Mode::Points;
-    std::vector<Node> nodes;
-    bool nodesValid = false;
-    int hover = -1, drag = -1, lastIdx = -1;
-    float lastV = 0.0f;
 };
 
 /** The ink blot: grows with Size (or Sustain), drifts with Pan, glows with Level, warms with Drive. */
@@ -140,8 +62,15 @@ private:
     void undo();
     void redo();
     void markCustom();
-    void stamp (int which);
+    void lanesChanged();
     void updateHistoryButtons();
+    void refreshLaneButtons();
+    void rebuildPresetBox();
+    void showShapesMenu();
+    void applyShape (int id);
+    void showLaneMenu();
+    void beginSavingPreset();
+    void finishSavingPreset (bool save);
     void setupCombo (juce::ComboBox&, const juce::String& paramId, std::unique_ptr<ComboAtt>&);
     void setupSlider (juce::Slider&, const juce::String& paramId, std::unique_ptr<SliderAtt>&, const juce::String& label);
     juce::String formatValue (int lane, float v) const;
@@ -155,11 +84,12 @@ private:
     std::unique_ptr<juce::PropertiesFile> settings;
 
     juce::ComboBox presetBox, loopBox, typeBox, charBox, placeBox, gridBox;
-    juce::TextButton addSpaceBtn { "Add space" }, shapeSpaceBtn { "Shape space" };
+    juce::TextEditor nameEditor;
+    juce::TextButton addSpaceBtn { "Add space" }, shapeSpaceBtn { "Shape space" }, savePresetBtn { "Save" };
     std::array<juce::TextButton, ink::kMaxLanes> laneButtons;
-    juce::TextButton pointsBtn { "Points" }, brushBtn { "Brush" }, smoothBtn { "Smooth" }, invertBtn { "Invert" },
-                     undoBtn { "Undo" }, redoBtn { "Redo" }, soloBtn { "Tail solo" };
-    std::array<juce::TextButton, 5> stampBtns;
+    juce::TextButton pointsBtn { "Points" }, brushBtn { "Brush" }, shapesBtn { "Shapes" }, laneMenuBtn { "Lane" },
+                     fitBtn { "Fit" }, barBtn { "Bar" }, beatBtn { "Beat" }, expandBtn { "Expand" },
+                     smoothBtn { "Smooth" }, invertBtn { "Invert" }, undoBtn { "Undo" }, redoBtn { "Redo" }, soloBtn { "Tail solo" };
     juce::Slider predelaySl, brightSl, outputSl, mixSl, driftSl, swingSl, depthSl, toneSl, hitLenSl, sensSl, hitsSl;
 
     std::unique_ptr<ComboAtt> loopAtt, typeAtt, charAtt, placeAtt;
@@ -168,12 +98,18 @@ private:
     std::unique_ptr<ButtonAtt> soloAtt;
 
     std::vector<std::pair<juce::String, juce::Slider*>> sliderLabels;
-    juce::Rectangle<int> readoutArea, hitLightArea;
+    juce::Rectangle<int> readoutArea, hitLightArea, hintArea;
 
     std::vector<HistoryEntry> undoStack, redoStack;
+    std::vector<float> laneClip;
+    juce::Array<InkroomProcessor::UserPreset> userList;
+    int userPresetId = 0;
+    int shapeRepeat = 2, shapeRotate = 0;
+    bool expanded = false, savingPreset = false;
     int shownSpace = -1;
     int seenVersion = -1;
     float smoothEnergy = 0.3f, smoothHit = 0.0f;
 
+    friend struct InkroomEditorTest;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InkroomEditor)
 };

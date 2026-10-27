@@ -150,6 +150,7 @@ void InkroomProcessor::loadPreset (int sp, int index)
 
     const auto& p = list[(size_t) index];
     auto& lanes = lanesFor (sp);
+    clearLinks (sp);
     if (shape)
         ink::shapeDefaults (lanes);
     p.apply (lanes);
@@ -171,10 +172,11 @@ void InkroomProcessor::loadPreset (int sp, int index)
 
 bool InkroomProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-    const auto in = layouts.getMainInputChannelSet();
-    return in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo();
+    // Stereo out (from mono or stereo in), or mono in and out for a plain mono track.
+    const auto in = layouts.getMainInputChannelSet(), out = layouts.getMainOutputChannelSet();
+    if (out == juce::AudioChannelSet::stereo())
+        return in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo();
+    return out == juce::AudioChannelSet::mono() && in == juce::AudioChannelSet::mono();
 }
 
 void InkroomProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -205,7 +207,7 @@ void InkroomProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     }
     satHP.setCutoffFrequency (30.0f);
 
-    for (auto* b : { &sendBuf, &convTmp, &wetBuf, &undelayed, &delayed, &addOut, &shapeOut })
+    for (auto* b : { &sendBuf, &convTmp, &wetBuf, &undelayed, &delayed, &addOut, &shapeOut, &monoWork })
         b->setSize (2, maxBlock);
     for (auto& v : pXf)
         v.assign ((size_t) maxBlock, 0.0f);
@@ -276,9 +278,10 @@ void InkroomProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     const int n = buffer.getNumSamples();
     const int numIn = getTotalNumInputChannels();
 
+    const bool monoOut = buffer.getNumChannels() < 2;
     if (numIn == 0)
         buffer.clear();
-    else if (numIn == 1 && buffer.getNumChannels() > 1)
+    else if (numIn == 1 && ! monoOut)
         buffer.copyFrom (1, 0, buffer, 0, 0, n);
 
     // Follow the host's tempo and bar position; free-run when the transport is stopped.
@@ -301,13 +304,25 @@ void InkroomProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     const double pps = bpm / 60.0 / sr;
     lastBpm = bpm;
+    uiBpm.store ((float) bpm);
     freePpq = ppq + n * pps;
     uiPlaying.store (playing);
 
     for (int start = 0; start < n; start += maxBlock)
     {
         const int len = std::min (maxBlock, n - start);
-        processChunk (buffer, start, len, ppq + start * pps, pps);
+        if (monoOut)
+        {
+            // Mono track: run the stereo engine on a copy, then fold back to mono.
+            monoWork.copyFrom (0, 0, buffer, 0, start, len);
+            monoWork.copyFrom (1, 0, buffer, 0, start, len);
+            processChunk (monoWork, 0, len, ppq + start * pps, pps);
+            buffer.copyFrom (0, start, monoWork, 0, 0, len);
+            buffer.applyGain (0, start, len, 0.5f);
+            buffer.addFrom (0, start, monoWork, 1, 0, len, 0.5f);
+        }
+        else
+            processChunk (buffer, start, len, ppq + start * pps, pps);
     }
 }
 
@@ -369,7 +384,7 @@ void InkroomProcessor::processAdd (int len, double ppq0, double pps, bool publis
     brightLP.setCutoffFrequency (1500.0f * std::pow (12.0f, pBright->load()));
 
     // 1. Lane values at control rate, smoothed per sample into gain curves.
-    const float coef = 1.0f - std::exp (-1.0f / (0.002f * (float) sr));
+    const float coef = 1.0f - std::exp (-1.0f / (0.0007f * (float) sr));
     std::array<float, 4> tXf = sXf;
     float tLev = sLev, tPan = sPan, tPre = sPre, tPost = sPost;
 
@@ -490,7 +505,7 @@ void InkroomProcessor::processShape (int len, double ppq0, double pps, bool publ
     const float dryGain = solo ? 0.0f : 1.0f - mix;
 
     // 1. Lanes at control rate, smoothed per sample.
-    const float coef = 1.0f - std::exp (-1.0f / (0.002f * (float) sr));
+    const float coef = 1.0f - std::exp (-1.0f / (0.0007f * (float) sr));
     float tSus = hSus, tPunch = hPunch, tLev = hLev, tWidth = hWidth, tPan = hPan, tPre = hPre, tPost = hPost;
     for (int i = 0; i < len; ++i)
     {
@@ -586,13 +601,50 @@ void InkroomProcessor::processShape (int len, double ppq0, double pps, bool publ
     }
 }
 
-void InkroomProcessor::getStateInformation (juce::MemoryBlock& destData)
+juce::ValueTree InkroomProcessor::captureState()
 {
     auto state = apvts.copyState();
     state.setProperty ("lanesAdd", addLanes.toBase64(), nullptr);
     state.setProperty ("lanesShape", shapeLanes.toBase64(), nullptr);
     state.setProperty ("presetAdd", currentPreset[0].load(), nullptr);
     state.setProperty ("presetShape", currentPreset[1].load(), nullptr);
+    juce::StringArray linkText;
+    for (int sp = 0; sp < 2; ++sp)
+        for (int l = 0; l < ink::kMaxLanes; ++l)
+            if (const auto& k = links[(size_t) sp][(size_t) l]; k.source >= 0)
+                linkText.add (juce::String (sp) + ":" + juce::String (l) + ":" + juce::String (k.source) + ":" + (k.inverted ? "1" : "0"));
+    state.setProperty ("links", linkText.joinIntoString (";"), nullptr);
+    return state;
+}
+
+void InkroomProcessor::applyState (const juce::ValueTree& state, bool includeEditor)
+{
+    if (! state.hasType (apvts.state.getType()))
+        return;
+    // Sessions saved by 0.1 stored the Add space lanes as "lanes".
+    addLanes.fromBase64 (state.getProperty (state.hasProperty ("lanesAdd") ? "lanesAdd" : "lanes").toString());
+    shapeLanes.fromBase64 (state.getProperty ("lanesShape").toString());
+    currentPreset[0].store ((int) state.getProperty ("presetAdd", state.getProperty ("preset", -1)));
+    currentPreset[1].store ((int) state.getProperty ("presetShape", -1));
+    clearLinks (0);
+    clearLinks (1);
+    for (auto& item : juce::StringArray::fromTokens (state.getProperty ("links").toString(), ";", ""))
+    {
+        auto parts = juce::StringArray::fromTokens (item, ":", "");
+        if (parts.size() == 4)
+            setLink (parts[0].getIntValue(), parts[1].getIntValue(), parts[2].getIntValue(), parts[3] == "1");
+    }
+    if (includeEditor)
+        editorScale.store ((float) state.getProperty ("editorScale", -1.0f));
+    auto copy = state.createCopy();
+    for (auto* prop : { "lanesAdd", "lanesShape", "lanes", "links", "editorScale", "presetAdd", "presetShape", "preset" })
+        copy.removeProperty (prop, nullptr);
+    apvts.replaceState (copy);
+}
+
+void InkroomProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    auto state = captureState();
     state.setProperty ("editorScale", editorScale.load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -601,18 +653,86 @@ void InkroomProcessor::getStateInformation (juce::MemoryBlock& destData)
 void InkroomProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
+        applyState (juce::ValueTree::fromXml (*xml), true);
+}
+
+//==============================================================================
+void InkroomProcessor::setLink (int sp, int lane, int source, bool inverted)
+{
+    if (sp < 0 || sp > 1 || lane < 0 || lane >= ink::kMaxLanes || source == lane || source >= lanesFor (sp).count)
+        return;
+    links[(size_t) sp][(size_t) lane] = { source, inverted };
+    propagateLinks (sp);
+}
+
+void InkroomProcessor::clearLinks (int sp)
+{
+    for (auto& k : links[(size_t) sp])
+        k = {};
+}
+
+void InkroomProcessor::propagateLinks (int sp)
+{
+    auto& lanes = lanesFor (sp);
+    // Two passes so a lane linked to a linked lane also follows.
+    for (int pass = 0; pass < 2; ++pass)
+        for (int l = 0; l < lanes.count; ++l)
+            if (const auto& k = links[(size_t) sp][(size_t) l]; k.source >= 0 && k.source < lanes.count)
+                lanes.copyLane (k.source, l, k.inverted);
+}
+
+//==============================================================================
+juce::File InkroomProcessor::userPresetFolder()
+{
+   #if JUCE_MAC
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("Application Support/Imagine Plugins/Inkroom/Presets");
+   #else
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("Imagine Plugins/Inkroom/Presets");
+   #endif
+}
+
+juce::Array<InkroomProcessor::UserPreset> InkroomProcessor::userPresets (int sp) const
+{
+    juce::Array<UserPreset> list;
+    for (const auto& f : userPresetFolder().findChildFiles (juce::File::findFiles, false, "*.inkroom"))
+        if (auto xml = juce::XmlDocument::parse (f))
+        {
+            const int fileSpace = xml->getChildByAttribute ("id", "space") != nullptr
+                                      ? juce::roundToInt (xml->getChildByAttribute ("id", "space")->getDoubleAttribute ("value"))
+                                      : 0;
+            if (fileSpace == sp)
+                list.add ({ f.getFileNameWithoutExtension(), f, fileSpace });
+        }
+    std::sort (list.begin(), list.end(), [] (const UserPreset& a, const UserPreset& b) { return a.name.compareNatural (b.name) < 0; });
+    return list;
+}
+
+bool InkroomProcessor::saveUserPreset (const juce::String& name)
+{
+    const auto clean = juce::File::createLegalFileName (name.trim());
+    if (clean.isEmpty())
+        return false;
+    auto folder = userPresetFolder();
+    if (! folder.createDirectory())
+        return false;
+    auto state = captureState();
+    state.setProperty ("presetAdd", -1, nullptr);
+    state.setProperty ("presetShape", -1, nullptr);
+    if (auto xml = state.createXml())
+        return xml->writeTo (folder.getChildFile (clean + ".inkroom"));
+    return false;
+}
+
+bool InkroomProcessor::loadUserPreset (const juce::File& file)
+{
+    if (auto xml = juce::XmlDocument::parse (file))
     {
-        auto state = juce::ValueTree::fromXml (*xml);
-        if (! state.hasType (apvts.state.getType()))
-            return;
-        // Sessions saved by 0.1 stored the Add space lanes as "lanes".
-        addLanes.fromBase64 (state.getProperty (state.hasProperty ("lanesAdd") ? "lanesAdd" : "lanes").toString());
-        shapeLanes.fromBase64 (state.getProperty ("lanesShape").toString());
-        currentPreset[0].store ((int) state.getProperty ("presetAdd", state.getProperty ("preset", -1)));
-        currentPreset[1].store ((int) state.getProperty ("presetShape", -1));
-        editorScale.store ((float) state.getProperty ("editorScale", -1.0f));
-        apvts.replaceState (state);
+        applyState (juce::ValueTree::fromXml (*xml), false);
+        return true;
     }
+    return false;
 }
 
 juce::AudioProcessorEditor* InkroomProcessor::createEditor()

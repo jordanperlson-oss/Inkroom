@@ -1,4 +1,4 @@
-# Installing Inkroom (MVP 0.1)
+# Installing Inkroom
 
 This build is for testing on your own Mac. It isn't notarized by Apple yet, so macOS needs one extra step the first time.
 
@@ -6,7 +6,7 @@ This build is for testing on your own Mac. It isn't notarized by Apple yet, so m
 
 Download **Inkroom-mac.dmg** from the repo's Releases page (the newest build is always at `releases/latest`) and double-click it to open.
 
-Then open Finder, press **Shift + Cmd + G**, and go to:
+Quit Logic first. Then open Finder, press **Shift + Cmd + G**, and go to:
 
 ```
 ~/Library/Audio/Plug-Ins/Components

@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
-# Every build gets its own version (0.2.<build number>) so macOS and Logic never
+# Every build gets its own version (0.3.<build number>) so macOS and Logic never
 # mistake a new build for a cached older one.
 if(NOT DEFINED INKROOM_BUILD)
     set(INKROOM_BUILD 0)
 endif()
-project(Inkroom VERSION 0.2.${INKROOM_BUILD})
+project(Inkroom VERSION 0.3.${INKROOM_BUILD})
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,14 +36,15 @@ juce_add_plugin(Inkroom
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE
     AU_MAIN_TYPE kAudioUnitType_Effect
     VST3_CATEGORIES Fx Reverb)
 
 target_sources(Inkroom PRIVATE
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/ShapeCanvas.cpp)
 
 target_include_directories(Inkroom PRIVATE Source)
 
@@ -74,7 +75,8 @@ if(INKROOM_TESTS)
     target_sources(InkroomCheck PRIVATE
         tests/InkroomCheck.cpp
         Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp)
+        Source/PluginEditor.cpp
+        Source/ShapeCanvas.cpp)
     target_include_directories(InkroomCheck PRIVATE Source)
     target_compile_definitions(InkroomCheck PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ALSA=0 JUCE_JACK=0)
     target_link_libraries(InkroomCheck PRIVATE
@@ -82,15 +84,29 @@ if(INKROOM_TESTS)
 endif()
 if(INKROOM_TESTS)
     juce_add_console_app(InkroomMeasure PRODUCT_NAME "InkroomMeasure")
-    target_sources(InkroomMeasure PRIVATE tests/Measure.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
+    target_sources(InkroomMeasure PRIVATE tests/Measure.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/ShapeCanvas.cpp)
     target_include_directories(InkroomMeasure PRIVATE Source)
     target_compile_definitions(InkroomMeasure PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ALSA=0 JUCE_JACK=0)
     target_link_libraries(InkroomMeasure PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 endif()
 if(INKROOM_TESTS)
     juce_add_console_app(InkroomShapeCheck PRODUCT_NAME "InkroomShapeCheck")
-    target_sources(InkroomShapeCheck PRIVATE tests/ShapeCheck.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
+    target_sources(InkroomShapeCheck PRIVATE tests/ShapeCheck.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/ShapeCanvas.cpp)
     target_include_directories(InkroomShapeCheck PRIVATE Source)
     target_compile_definitions(InkroomShapeCheck PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ALSA=0 JUCE_JACK=0)
     target_link_libraries(InkroomShapeCheck PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+endif()
+if(INKROOM_TESTS)
+    juce_add_console_app(InkroomOldSession PRODUCT_NAME "InkroomOldSession")
+    target_sources(InkroomOldSession PRIVATE tests/OldSession.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/ShapeCanvas.cpp)
+    target_include_directories(InkroomOldSession PRIVATE Source)
+    target_compile_definitions(InkroomOldSession PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ALSA=0 JUCE_JACK=0)
+    target_link_libraries(InkroomOldSession PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+endif()
+if(INKROOM_TESTS)
+    juce_add_console_app(InkroomUiCheck PRODUCT_NAME "InkroomUiCheck")
+    target_sources(InkroomUiCheck PRIVATE tests/UiCheck.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/ShapeCanvas.cpp)
+    target_include_directories(InkroomUiCheck PRIVATE Source)
+    target_compile_definitions(InkroomUiCheck PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ALSA=0 JUCE_JACK=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(InkroomUiCheck PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 endif()

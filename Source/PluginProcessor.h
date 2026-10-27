@@ -47,6 +47,21 @@ public:
 
     ink::Lanes& lanesFor (int s) { return s == ink::ShapeSpace ? shapeLanes : addLanes; }
 
+    // Lane links: a linked lane follows another lane's shape, matched or inverted.
+    struct Link { int source = -1; bool inverted = false; };
+    Link getLink (int space, int lane) const { return links[(size_t) space][(size_t) lane]; }
+    void setLink (int space, int lane, int source, bool inverted);
+    void clearLinks (int space);
+    /** Copies every source lane into the lanes linked to it. Call after editing a set. */
+    void propagateLinks (int space);
+
+    // Your own presets: whole-plugin setups saved as files, listed by mode.
+    struct UserPreset { juce::String name; juce::File file; int space = 0; };
+    static juce::File userPresetFolder();
+    juce::Array<UserPreset> userPresets (int space) const;
+    bool saveUserPreset (const juce::String& name);
+    bool loadUserPreset (const juce::File& file);
+
     juce::AudioProcessorValueTreeState apvts;
     ink::Lanes addLanes { ink::NumLanes };
     ink::Lanes shapeLanes { ink::NumShapeLanes };
@@ -57,12 +72,17 @@ public:
 
     // Read by the editor for the playhead, readouts and room view.
     std::atomic<float> uiPhase { 0.0f }, uiEnergy { 0.0f }, uiHit { 0.0f };
+    std::atomic<float> uiBpm { 120.0f };
     std::atomic<bool> uiPlaying { false };
     std::array<std::atomic<float>, ink::kMaxLanes> uiVals {};
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
 private:
+    juce::ValueTree captureState();
+    void applyState (const juce::ValueTree& state, bool includeEditor);
+    std::array<std::array<Link, ink::kMaxLanes>, 2> links {};
+
     void timerCallback() override;
     void rebuildImpulses();
     void processChunk (juce::AudioBuffer<float>& buffer, int start, int len, double ppq0, double ppqPerSample);
@@ -90,7 +110,7 @@ private:
 
     // Shared: 3 ms lookahead so the split can catch each hit before it lands.
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> lookahead { 4096 };
-    juce::AudioBuffer<float> undelayed, delayed, addOut, shapeOut;
+    juce::AudioBuffer<float> undelayed, delayed, addOut, shapeOut, monoWork;
     float modeFade = 0.0f;
     int lookaheadSamples = 0;
 
